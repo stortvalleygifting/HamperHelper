@@ -3,7 +3,14 @@
 // resolves with the full, fresh collection so the caller can just assign it
 // straight onto State and re-render.
 
-async function apiRequest(method, path, body) {
+// Fires when any request comes back 401 (session expired/never existed),
+// except calls that opt out via skipUnauthorizedHandler — namely login
+// itself, where a 401 just means "wrong password", not "you got logged out".
+let onUnauthorized = null;
+function setUnauthorizedHandler(fn) { onUnauthorized = fn; }
+
+async function apiRequest(method, path, body, reqOpts) {
+  reqOpts = reqOpts || {};
   const opts = { method, headers: {} };
   if (body !== undefined) {
     opts.headers['Content-Type'] = 'application/json';
@@ -13,6 +20,7 @@ async function apiRequest(method, path, body) {
   let data = null;
   try { data = await res.json(); } catch (e) { /* no body */ }
   if (!res.ok) {
+    if (res.status === 401 && !reqOpts.skipUnauthorizedHandler && onUnauthorized) onUnauthorized();
     throw new Error((data && data.error) || `Request failed (${res.status})`);
   }
   return data;
@@ -29,6 +37,7 @@ async function apiUploadFile(path, file, extraFields) {
   let data = null;
   try { data = await res.json(); } catch (e) { /* no body */ }
   if (!res.ok) {
+    if (res.status === 401 && onUnauthorized) onUnauthorized();
     throw new Error((data && data.error) || `Upload failed (${res.status})`);
   }
   return data;
@@ -36,6 +45,18 @@ async function apiUploadFile(path, file, extraFields) {
 
 const api = {
   bootstrap: () => apiRequest('GET', '/api/bootstrap'),
+
+  auth: {
+    login: (username, password) => apiRequest('POST', '/api/login', { username, password }, { skipUnauthorizedHandler: true }),
+    logout: () => apiRequest('POST', '/api/logout', undefined, { skipUnauthorizedHandler: true }),
+    session: () => apiRequest('GET', '/api/session'),
+  },
+  staff: {
+    list: () => apiRequest('GET', '/api/staff'),
+    create: (item) => apiRequest('POST', '/api/staff', item),
+    update: (id, item) => apiRequest('PUT', `/api/staff/${id}`, item),
+    remove: (id) => apiRequest('DELETE', `/api/staff/${id}`),
+  },
 
   stock: {
     create: (item) => apiRequest('POST', '/api/stock', item),

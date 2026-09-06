@@ -2,7 +2,10 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { UPLOADS_ROOT } from './lib/storage.js';
+import { sessionMiddleware, requireAuth } from './lib/session.js';
 
+import authRouter from './routes/auth.js';
+import staffRouter from './routes/staff.js';
 import bootstrapRouter from './routes/bootstrap.js';
 import stockRouter from './routes/stock.js';
 import packagingRouter from './routes/packaging.js';
@@ -21,22 +24,30 @@ const assetsDir = path.resolve(__dirname, '../assets');
 
 export function createApp() {
   const app = express();
+  if (process.env.NODE_ENV === 'production') app.set('trust proxy', 1);
   app.use(express.json({ limit: '2mb' }));
+  app.use(sessionMiddleware);
 
-  app.use('/uploads', express.static(UPLOADS_ROOT));
-  app.use('/assets', express.static(assetsDir));
+  // Login/logout/session-check are the only API routes reachable while
+  // signed out; everything else (including uploaded files) requires a
+  // session.
+  app.use('/api', authRouter);
 
-  app.use('/api/bootstrap', bootstrapRouter);
-  app.use('/api/stock', stockRouter);
-  app.use('/api/packaging', packagingRouter);
-  app.use('/api/shipping', shippingRouter);
-  app.use('/api/sources', sourcesRouter);
-  app.use('/api/customers', customersRouter);
-  app.use('/api/products', productsRouter);
-  app.use('/api/orders', ordersRouter);
-  app.use('/api/proposals', proposalsRouter);
-  app.use('/api/uploads', uploadsRouter);
-  app.use('/api/reports', reportsRouter);
+  app.use('/uploads', requireAuth, express.static(UPLOADS_ROOT));
+  app.use('/assets', requireAuth, express.static(assetsDir));
+
+  app.use('/api/staff', requireAuth, staffRouter);
+  app.use('/api/bootstrap', requireAuth, bootstrapRouter);
+  app.use('/api/stock', requireAuth, stockRouter);
+  app.use('/api/packaging', requireAuth, packagingRouter);
+  app.use('/api/shipping', requireAuth, shippingRouter);
+  app.use('/api/sources', requireAuth, sourcesRouter);
+  app.use('/api/customers', requireAuth, customersRouter);
+  app.use('/api/products', requireAuth, productsRouter);
+  app.use('/api/orders', requireAuth, ordersRouter);
+  app.use('/api/proposals', requireAuth, proposalsRouter);
+  app.use('/api/uploads', requireAuth, uploadsRouter);
+  app.use('/api/reports', requireAuth, reportsRouter);
 
   app.use(express.static(publicDir));
 

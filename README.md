@@ -31,12 +31,13 @@ Requires Node 18+ and a Postgres database.
 ```bash
 cd server
 npm install
-cp .env.example .env   # fill in DATABASE_URL
+cp .env.example .env   # fill in DATABASE_URL and SESSION_SECRET
 npm run migrate -- --seed   # creates tables + default packaging/shipping options
+npm run create-admin -- --username=admin --password=... --name="Your Name"   # first login
 npm start                   # serves the API and the frontend on $PORT (default 3000)
 ```
 
-Then open `http://localhost:3000`.
+Then open `http://localhost:3000` and log in with the account you just created.
 
 For local development, `npm run dev` restarts the server on file changes.
 
@@ -63,6 +64,31 @@ given schema) only has `label`, `price`, and `vat` — no `weight`/`cost` like
 `packaging_options` has. Shipping is treated as a pass-through customer
 charge rather than a tracked cost, so a hamper's total *cost* doesn't include
 its shipping option (its *price* still does).
+
+## Staff login
+
+The whole app sits behind a simple username/password login (`server/src/lib/session.js`
++ `server/src/routes/auth.js`). Sessions are cookie-based, stored in Postgres
+via `connect-pg-simple` (it creates its own `session` table automatically —
+no migration needed for that part). Passwords are hashed with `scrypt`
+(`server/src/lib/passwords.js`); nothing plaintext ever touches the database
+or the API responses.
+
+Staff accounts live in the `staff` table (migration `003_staff.sql`) and are
+managed from the **Staff** tab once logged in — add, edit (including
+resetting a password), and delete. Two guardrails on delete: you can't delete
+your own account while logged into it, and the last remaining account can't
+be deleted, so it's impossible to lock everyone out through the UI.
+
+Since the staff list starts empty, there's no way to log in until you create
+the first account from the command line:
+
+```bash
+npm run create-admin -- --username=admin --password=... [--name="Jo Bloggs"] [--admin=false]
+```
+
+Running it again with an existing username resets that account's password —
+handy if everyone gets locked out.
 
 ## Uploads
 

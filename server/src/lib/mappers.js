@@ -3,6 +3,16 @@
 // the frontend rendering/pricing code didn't need to change, only its
 // persistence layer.
 
+export function staffToApi(row) {
+  // password_hash is deliberately never included in the API shape.
+  return {
+    id: row.id,
+    username: row.username,
+    displayName: row.display_name || '',
+    isAdmin: row.is_admin,
+  };
+}
+
 export function stockToApi(row) {
   return {
     id: row.id,

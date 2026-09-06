@@ -6,11 +6,14 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "migrate": "node src/migrate.js"
+    "migrate": "node src/migrate.js",
+    "create-admin": "node src/create-admin.js"
   },
   "dependencies": {
+    "connect-pg-simple": "^10.0.0",
     "dotenv": "^17.4.2",
     "express": "^5.1.0",
+    "express-session": "^1.19.0",
     "multer": "^2.0.1",
     "pg": "^8.11.5"
   }

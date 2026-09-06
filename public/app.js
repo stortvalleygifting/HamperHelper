@@ -1,4 +1,4 @@
-const State = { tab:'dashboard', products:[], stock:[], orders:[], customers:[], packaging:[], sources:[], shipping:[], proposals:[], loaded:false };
+const State = { tab:'dashboard', products:[], stock:[], orders:[], customers:[], packaging:[], sources:[], shipping:[], proposals:[], staff:[], me:null, loaded:false };
 
 const ITEM_CATEGORIES = ['Alcohol Free','Beer','Cider','Coffee','Gin','Rum','Tea','Vodka','Whisky','Wine','Charcuterie','Snacks','Jam, Chutney & Preserves','Marinade','Mayonnaise','Oil','Pasta','Pudding','Rubs','Salad Dressing','Sauce','Biscuits and Cake Bars','Chocolate','Fudge','Nuts','Savoury Snacks','Sweets'];
 
@@ -31,7 +31,7 @@ function showToast(msg){
 
 async function loadAll(){
   try{
-    const data = await api.bootstrap();
+    const [data, staff] = await Promise.all([api.bootstrap(), api.staff.list()]);
     State.products = data.products;
     State.stock = data.stock;
     State.orders = data.orders;
@@ -40,6 +40,7 @@ async function loadAll(){
     State.shipping = data.shipping;
     State.sources = data.sources;
     State.proposals = data.proposals;
+    State.staff = staff;
     State.loaded = true;
   }catch(e){
     console.error(e);
@@ -91,12 +92,18 @@ function render(){
       ${navItem('shipping','Shipping')}
       ${navItem('sources','Sources')}
       ${navItem('reports','Reports')}
+      ${navItem('staff','Staff')}
+      <div class="sidebarFooter">
+        <div class="whoami">${State.me? (State.me.displayName || State.me.username) : ''}</div>
+        <button class="ghost small" id="logoutBtn">Log out</button>
+      </div>
     </div>
     <div class="main" id="main"></div>
   `;
   document.querySelectorAll('.navitem').forEach(el=>{
     el.addEventListener('click', ()=> setTab(el.dataset.tab));
   });
+  document.getElementById('logoutBtn').onclick = logout;
   const main = document.getElementById('main');
   if(State.tab==='dashboard') main.innerHTML = renderDashboard();
   if(State.tab==='proposals') main.innerHTML = renderProposals();
@@ -109,6 +116,7 @@ function render(){
   if(State.tab==='shipping') main.innerHTML = renderShipping();
   if(State.tab==='sources') main.innerHTML = renderSources();
   if(State.tab==='reports') main.innerHTML = renderReports();
+  if(State.tab==='staff') main.innerHTML = renderStaff();
   attachHandlers();
 }
 
@@ -1010,6 +1018,29 @@ function renderSources(){
   `;
 }
 
+function renderStaff(){
+  const rows = State.staff.slice().sort((a,b)=> a.username.localeCompare(b.username));
+  return `
+    <div class="row-between">
+      <div><h1>Staff</h1><p class="subtitle">Who can log in to Hamper Helper.</p></div>
+      <button class="primary" id="newStaffBtn">Add staff</button>
+    </div>
+    <div class="panel">
+      ${rows.length? `<table><thead><tr><th>Username</th><th>Name</th><th>Admin</th><th></th></tr></thead><tbody>
+        ${rows.map(s=>`<tr>
+          <td>${s.username}${s.id===State.me.id? ' <span class="mono">(you)</span>' : ''}</td>
+          <td>${s.displayName||'—'}</td>
+          <td>${s.isAdmin? 'Yes' : 'No'}</td>
+          <td style="white-space:nowrap;">
+            <button class="small ghost" data-editstaff="${s.id}">Edit</button>
+            <button class="small danger" data-delstaff="${s.id}">Delete</button>
+          </td>
+        </tr>`).join('')}
+      </tbody></table>` : `<div class="empty">No staff accounts yet.</div>`}
+    </div>
+  `;
+}
+
 function renderCustomers(){
   if(!State.customerFilter) State.customerFilter = { search:'' };
   if(!State.customerSort) State.customerSort = { col:'companyName', dir:'asc' };
@@ -1100,6 +1131,46 @@ function openSourceModal(existing){
       State.sources = existing ? await api.sources.update(s.id, { label }) : await api.sources.create({ label });
       closeModal(); render(); showToast('Source saved');
     }catch(e){ showToast(e.message || 'Could not save source'); }
+  };
+}
+
+function openStaffModal(existing){
+  const s = existing || { id:null, username:'', displayName:'', isAdmin:false };
+  document.getElementById('modalRoot').innerHTML = `
+    <div class="modal-overlay" id="ovl">
+      <div class="modal">
+        <h3>${existing? 'Edit staff':'Add staff'}</h3>
+        <div class="field"><label>Username</label><input id="f_username" value="${s.username}" placeholder="e.g. jsmith" autocomplete="off"></div>
+        <div class="field"><label>Name</label><input id="f_displayname" value="${s.displayName||''}" placeholder="e.g. Jo Smith"></div>
+        <div class="field">
+          <label>${existing? 'New password (leave blank to keep current)' : 'Password'}</label>
+          <input id="f_password" type="password" autocomplete="new-password" placeholder="At least 8 characters">
+        </div>
+        <div class="field">
+          <label style="display:flex;align-items:center;gap:8px;color:var(--text);font-size:13.5px;"><input type="checkbox" id="f_isadmin" style="width:auto;" ${s.isAdmin?'checked':''}> Admin (can manage staff)</label>
+        </div>
+        <div class="row-between" style="margin-top:16px;">
+          <button class="ghost" id="cancelBtn">Cancel</button>
+          <button class="primary" id="saveBtn">Save</button>
+        </div>
+      </div>
+    </div>`;
+  document.getElementById('cancelBtn').onclick = closeModal;
+  document.getElementById('saveBtn').onclick = async ()=>{
+    const username = document.getElementById('f_username').value.trim();
+    if(!username){ showToast('Give it a username first'); return; }
+    const password = document.getElementById('f_password').value;
+    if(!existing && !password){ showToast('Set a password for the new account'); return; }
+    const item = {
+      username,
+      displayName: document.getElementById('f_displayname').value.trim(),
+      isAdmin: document.getElementById('f_isadmin').checked,
+    };
+    if(password) item.password = password;
+    try{
+      State.staff = existing ? await api.staff.update(s.id, item) : await api.staff.create(item);
+      closeModal(); render(); showToast('Staff saved');
+    }catch(e){ showToast(e.message || 'Could not save staff'); }
   };
 }
 
@@ -1973,6 +2044,23 @@ function attachHandlers(){
     };
   });
 
+  const newStaffBtn = document.getElementById('newStaffBtn');
+  if(newStaffBtn) newStaffBtn.onclick = ()=> openStaffModal(null);
+  document.querySelectorAll('[data-editstaff]').forEach(b=>{
+    b.onclick = ()=> openStaffModal(State.staff.find(s=>s.id===b.dataset.editstaff));
+  });
+  document.querySelectorAll('[data-delstaff]').forEach(b=>{
+    b.onclick = ()=>{
+      const staffMember = State.staff.find(s=>s.id===b.dataset.delstaff);
+      openConfirmModal(`Delete the staff account "${staffMember? staffMember.username : ''}"? This can't be undone.`, async ()=>{
+        try{
+          State.staff = await api.staff.remove(b.dataset.delstaff);
+          render(); showToast('Staff account deleted');
+        }catch(e){ showToast(e.message || 'Could not delete staff account'); }
+      });
+    };
+  });
+
   const downloadCsvBtn = document.getElementById('downloadCsvBtn');
   if(downloadCsvBtn) downloadCsvBtn.onclick = downloadStockCsv;
   const uploadCsvBtn = document.getElementById('uploadCsvBtn');
@@ -2127,9 +2215,53 @@ async function moveOrderStatus(id, direction){
   }
 }
 
+// ---------- Auth ----------
+function renderLogin(errorMsg){
+  document.getElementById('app').innerHTML = `
+    <div class="loginWrap">
+      <div class="loginCard">
+        <h1>Hamper Helper</h1>
+        <p class="subtitle">Sign in to continue</p>
+        <div class="loginError">${errorMsg||''}</div>
+        <form id="loginForm">
+          <div class="field"><label>Username</label><input id="f_username" autocomplete="username" autofocus></div>
+          <div class="field"><label>Password</label><input id="f_password" type="password" autocomplete="current-password"></div>
+          <button class="primary" type="submit" style="width:100%;">Log in</button>
+        </form>
+      </div>
+    </div>
+  `;
+  document.getElementById('loginForm').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const username = document.getElementById('f_username').value.trim();
+    const password = document.getElementById('f_password').value;
+    if(!username || !password){ renderLogin('Enter a username and password'); return; }
+    try{
+      State.me = await api.auth.login(username, password);
+      await loadAll();
+      render();
+    }catch(err){
+      renderLogin(err.message || 'Could not log in');
+    }
+  });
+}
+
+async function logout(){
+  try{ await api.auth.logout(); }catch(e){ /* ignore — we're logging out regardless */ }
+  State.me = null;
+  renderLogin();
+}
+
 // ---------- Init ----------
+setUnauthorizedHandler(()=>{
+  State.me = null;
+  renderLogin('Your session expired — please log in again');
+});
+
 (async function init(){
   document.getElementById('app').innerHTML = `<div style="padding:40px;color:#6B6656;font-family:Inter,sans-serif;">Loading…</div>`;
+  State.me = await api.auth.session();
+  if(!State.me){ renderLogin(); return; }
   await loadAll();
   render();
 })();
