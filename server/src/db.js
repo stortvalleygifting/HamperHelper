@@ -13,6 +13,16 @@ types.setTypeParser(1700, (val) => (val === null ? null : parseFloat(val)));
 types.setTypeParser(1082, (val) => val);
 
 if (!process.env.DATABASE_URL) {
+  // Temporary diagnostic for a Railway deploy where DATABASE_URL isn't
+  // showing up despite being set in the dashboard — logs which relevant
+  // variable *names* actually exist in this container (never values), so we
+  // can tell a propagation/naming problem from a scoping/environment one.
+  // TODO: remove once the Railway deploy is confirmed working.
+  const relevant = Object.keys(process.env)
+    .filter((k) => /DATABASE|POSTGRES|^PG|RAILWAY/i.test(k))
+    .sort();
+  console.error('[diagnostic] DATABASE_URL is missing. Relevant env var names present:', relevant.length ? relevant : '(none found)');
+  console.error('[diagnostic] Total env var count:', Object.keys(process.env).length);
   throw new Error('DATABASE_URL environment variable is required');
 }
 
