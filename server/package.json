@@ -1,0 +1,17 @@
+{
+  "name": "hamperhelper-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "migrate": "node src/migrate.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^5.1.0",
+    "multer": "^2.0.1",
+    "pg": "^8.11.5"
+  }
+}
