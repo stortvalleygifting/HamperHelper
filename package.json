@@ -1,0 +1,14 @@
+{
+  "name": "hamperhelper",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Root manifest so PaaS builders (Railway, etc.) detect this as a Node app and run the Express server in server/, instead of falling back to serving public/ as a static site.",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "postinstall": "npm install --prefix server",
+    "migrate": "npm run migrate --prefix server",
+    "start": "npm run migrate --prefix server && npm start --prefix server"
+  }
+}
