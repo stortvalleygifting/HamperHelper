@@ -127,4 +127,28 @@
   .loginCard h1{text-align:center;margin-bottom:2px;}
   .loginCard .subtitle{text-align:center;}
   .loginError{color:var(--berry);font-size:13px;margin:-4px 0 12px;min-height:16px;}
-</style>
+  /* Wide tables: the native scrollbar is hidden and replaced by a copy that
+     sticks to the bottom of the window while the table is on screen. */
+  .hscroll{position:relative;}
+  .hscrollInner{overflow-x:auto;scrollbar-width:none;}
+  .hscrollInner::-webkit-scrollbar{display:none;}
+  .hscrollBar{position:sticky;bottom:0;overflow-x:auto;overflow-y:hidden;height:16px;background:var(--card);border-top:0.5px solid var(--border);z-index:5;}
+  .hscrollBar > div{height:1px;}
+  .clickrow{cursor:pointer;}
+  tr.clickrow:hover td{background:#FBF3F6;}
+  .ordercard.clickrow:hover{border-color:var(--ink-soft);}
+  .custLink{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;}
+  .custLink:hover{color:var(--ink-soft);text-decoration-style:solid;}
+  .stackedActions{display:flex;flex-direction:column;gap:4px;align-items:stretch;}
+  .inlineCheck{display:flex;align-items:center;gap:6px;margin:0;font-size:12.5px;color:var(--text-secondary);cursor:pointer;}
+  .inlineCheck input{width:auto;}
+  .modal.wide{width:820px;max-width:95vw;}
+  .modal.wide .comprow input.compNameInput{flex:4;}
+  .expandBtn{padding:3px 8px;flex:none;}
+  .hamperContents{margin:0 0 6px;padding-left:18px;font-size:13px;line-height:1.6;}
+  .contentsRow td{background:var(--paper);}
+  .colourSwatch{width:16px;height:16px;border-radius:4px;display:inline-block;border:0.5px solid var(--border);flex:none;}
+  .customerNotes{white-space:pre-wrap;font-size:13.5px;background:var(--paper);border-radius:7px;padding:8px 10px;}
+  .priceSummary tr.groupStart td{border-top:0.5px solid var(--kraft-line);}
+  .priceSummary td[rowspan]{font-weight:500;}
+  .priceSummary tr.totalRow td{font-weight:600;}

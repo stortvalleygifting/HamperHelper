@@ -1,4 +1,5 @@
-const State = { tab:'dashboard', products:[], stock:[], orders:[], customers:[], packaging:[], sources:[], shipping:[], proposals:[], staff:[], me:null, loaded:false };
+const State = { tab:'dashboard', products:[], stock:[], orders:[], customers:[], packaging:[], sources:[], shipping:[], proposals:[], staff:[], me:null, loaded:false, hideHamperCosts:false };
+try{ State.hideHamperCosts = localStorage.getItem('hh.hideHamperCosts') === '1'; }catch(e){ /* storage unavailable */ }
 
 const ITEM_CATEGORIES = ['Alcohol Free','Beer','Cider','Coffee','Gin','Rum','Tea','Vodka','Whisky','Wine','Charcuterie','Snacks','Jam, Chutney & Preserves','Marinade','Mayonnaise','Oil','Pasta','Pudding','Rubs','Salad Dressing','Sauce','Biscuits and Cake Bars','Chocolate','Fudge','Nuts','Savoury Snacks','Sweets'];
 
@@ -23,6 +24,40 @@ function wireProfitToggles(root){
     };
   });
 }
+// Wraps a wide table so its horizontal scrollbar floats at the bottom of the
+// window (see wireHScrolls) instead of sitting under the last row.
+function hscroll(inner){
+  return `<div class="hscroll"><div class="hscrollInner">${inner}</div><div class="hscrollBar"><div></div></div></div>`;
+}
+function wireHScrolls(){
+  document.querySelectorAll('.hscroll').forEach(wrap=>{
+    const inner = wrap.querySelector('.hscrollInner');
+    const bar = wrap.querySelector('.hscrollBar');
+    const sizeBar = ()=>{
+      bar.firstElementChild.style.width = inner.scrollWidth + 'px';
+      bar.style.display = inner.scrollWidth > inner.clientWidth + 1 ? '' : 'none';
+      bar.scrollLeft = inner.scrollLeft;
+    };
+    sizeBar();
+    bar.onscroll = ()=>{ if(inner.scrollLeft !== bar.scrollLeft) inner.scrollLeft = bar.scrollLeft; };
+    inner.onscroll = ()=>{ if(bar.scrollLeft !== inner.scrollLeft) bar.scrollLeft = inner.scrollLeft; };
+    wrap._sizeBar = sizeBar;
+  });
+}
+window.addEventListener('resize', ()=>{
+  document.querySelectorAll('.hscroll').forEach(wrap=>{ if(wrap._sizeBar) wrap._sizeBar(); });
+});
+
+// Clicking a customer's name anywhere opens their edit screen.
+function customerLink(cust, text){
+  if(!cust) return text;
+  return `<span class="custLink" data-custlink="${cust.id}">${text}</span>`;
+}
+
+// Clicks on these inside a clickable row do their own thing rather than
+// opening the row's edit screen.
+const ROW_CLICK_IGNORE = 'button,a,input,select,textarea,label,.profitToggle,.custLink';
+
 function showToast(msg){
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
@@ -170,6 +205,8 @@ function statusBadge(status){
 }
 
 function itemName(s){ return s.itemName || s.name || 'Unnamed item'; }
+// Item name plus brand, so the hamper editor's item search matches on either.
+function itemSearchLabel(s){ return s.brand ? `${itemName(s)} — ${s.brand}` : itemName(s); }
 
 function renderDashboard(){
   const open = State.orders.filter(o=>o.status!=='Closed');
@@ -188,9 +225,9 @@ function renderDashboard(){
     </div>
     <div class="panel">
       <h2>Needs attention</h2>
-      ${lowStock.length ? `<table><thead><tr><th>Item</th><th>On hand</th><th>Reserved (open orders)</th><th>On order</th><th>Availability</th></tr></thead><tbody>
-        ${lowStock.map(s=>`<tr><td>${itemName(s)}</td><td>${s.qtyOnHand}</td><td>${req[s.id]||0}</td><td>${s.qtyOnOrder||0}</td><td>${s.availability||'—'}</td></tr>`).join('')}
-      </tbody></table>` : `<div class="empty">Nothing needs attention. Stock covers all open orders.</div>`}
+      ${lowStock.length ? hscroll(`<table><thead><tr><th>Item</th><th>On hand</th><th>Reserved (open orders)</th><th>On order</th><th>Availability</th></tr></thead><tbody>
+        ${lowStock.map(s=>`<tr class="clickrow" data-rowkind="stock" data-rowid="${s.id}"><td>${itemName(s)}</td><td>${s.qtyOnHand}</td><td>${req[s.id]||0}</td><td>${s.qtyOnOrder||0}</td><td>${s.availability||'—'}</td></tr>`).join('')}
+      </tbody></table>`) : `<div class="empty">Nothing needs attention. Stock covers all open orders.</div>`}
     </div>
     <div class="panel">
       <h2>Latest orders</h2>
@@ -212,13 +249,13 @@ function orderCard(o, compact){
   const totals = computeOrderTotals(o);
   const vatLine = totals.vatBreakdown.length>1 ? totals.vatBreakdown.map(v=>`${v.rate}: ${fmtMoney(v.totalIncVat)}`).join(' · ') : '';
   return `
-    <div class="ordercard">
+    <div class="ordercard clickrow" data-rowkind="order" data-rowid="${o.id}">
       <div class="orow">
         <div>
-          <div class="oname">${swatch}${custLabel} <span class="mono">#${o.id.slice(-5)}</span></div>
+          <div class="oname">${swatch}${customerLink(cust, custLabel)} <span class="mono">#${o.id.slice(-5)}</span></div>
           <div class="ometa">${prod}</div>
-          <div class="ometa">${o.orderDate ? 'Ordered: '+o.orderDate : ''} ${o.deliveryDate ? ' · Delivery: '+o.deliveryDate : ''} ${o.notes ? ' · '+o.notes : ''}</div>
-          <div class="ometa">Cost: ${fmtMoney(totals.cost)} &nbsp;·&nbsp; Price: ${fmtMoney(totals.totalIncVat)} &nbsp;·&nbsp; Profit: ${profitToggleHtml(totals.profit)}</div>
+          <div class="ometa">${o.orderDate ? 'Ordered: '+o.orderDate : ''} ${o.deliveryDate ? ' · Dispatch: '+o.deliveryDate : ''} ${o.notes ? ' · '+o.notes : ''}</div>
+          <div class="ometa">Cost: ${fmtMoney(totals.cost)} &nbsp;·&nbsp; Price: ${fmtMoney(totals.totalIncVat)} (inc VAT) &nbsp;·&nbsp; Profit: ${profitToggleHtml(totals.profit)} (ex VAT)</div>
           ${vatLine ? `<div class="ometa" style="color:var(--text-muted);">${vatLine}</div>` : ''}
           <div style="margin-top:6px;">${statusBadge(o.status)} ${o.readyToInvoice ? `<span class="badge invoice">Ready to invoice</span>` : ''}</div>
         </div>
@@ -238,10 +275,10 @@ function proposalCard(pr){
   const custLabel = cust ? customerLabel(cust) : 'Unknown customer';
   const hampers = (pr.hamperIds||[]).map(id=>{ const p = productById(id); return p? p.name : null; }).filter(Boolean);
   return `
-    <div class="ordercard">
+    <div class="ordercard clickrow" data-rowkind="proposal" data-rowid="${pr.id}">
       <div class="orow">
         <div>
-          <div class="oname">${custLabel} <span class="mono">#${pr.id.slice(-5)}</span></div>
+          <div class="oname">${customerLink(cust, custLabel)} <span class="mono">#${pr.id.slice(-5)}</span></div>
           <div class="ometa">${pr.proposalDate? 'Proposed: '+pr.proposalDate : ''}</div>
           <div class="ometa">${hampers.length? hampers.join(', ') : 'No hamper options chosen yet'}</div>
           ${pr.docName ? `<div class="ometa">Document: ${pr.docName} (${pr.docSource==='uploaded'?'uploaded':'generated'})</div>` : ''}
@@ -330,7 +367,7 @@ function renderOrders(){
         <span style="flex:1;"></span>
         <select id="orderSortCol" style="max-width:160px;">
           <option value="orderDate" ${State.orderSort.col==='orderDate'?'selected':''}>Sort: Order date</option>
-          <option value="deliveryDate" ${State.orderSort.col==='deliveryDate'?'selected':''}>Sort: Delivery date</option>
+          <option value="deliveryDate" ${State.orderSort.col==='deliveryDate'?'selected':''}>Sort: Dispatch date</option>
           <option value="customer" ${State.orderSort.col==='customer'?'selected':''}>Sort: Customer</option>
           <option value="status" ${State.orderSort.col==='status'?'selected':''}>Sort: Status</option>
           <option value="totalCost" ${State.orderSort.col==='totalCost'?'selected':''}>Sort: Total cost</option>
@@ -356,14 +393,14 @@ function renderProduction(){
     </div>
     <div class="panel">
       <h2>Item requirements</h2>
-      ${Object.keys(req).length ? `<table><thead><tr><th>Item</th><th>Required</th><th>On hand</th><th>Status</th></tr></thead><tbody>
+      ${Object.keys(req).length ? hscroll(`<table><thead><tr><th>Item</th><th>Required</th><th>On hand</th><th>Status</th></tr></thead><tbody>
         ${Object.entries(req).map(([id,qty])=>{
           const s = stockById(id);
           if(!s) return `<tr><td>Unknown component</td><td>${qty}</td><td>—</td><td>—</td></tr>`;
           const short = qty > s.qtyOnHand;
-          return `<tr><td>${itemName(s)}</td><td>${qty}</td><td>${s.qtyOnHand}</td><td>${short? `<span class="badge low">Short by ${qty-s.qtyOnHand}</span>` : `<span class="badge packed">Covered</span>`}</td></tr>`;
+          return `<tr class="clickrow" data-rowkind="stock" data-rowid="${s.id}"><td>${itemName(s)}</td><td>${qty}</td><td>${s.qtyOnHand}</td><td>${short? `<span class="badge low">Short by ${qty-s.qtyOnHand}</span>` : `<span class="badge packed">Covered</span>`}</td></tr>`;
         }).join('')}
-      </tbody></table>` : `<div class="empty">No active production requirements.</div>`}
+      </tbody></table>`) : `<div class="empty">No active production requirements.</div>`}
     </div>
   `;
 }
@@ -402,7 +439,9 @@ function renderProducts(){
   if(!State.productFilter) State.productFilter = { search:'' };
   if(!State.productSort) State.productSort = { col:'name', dir:'asc' };
   const rows = getFilteredSortedProducts();
-  const cols = [[null,''],['name','Hamper'],[null,'Items'],['packagingName','Packaging'],['shippingName','Shipping'],['totalCost','Total cost'],['totalPrice','Total price'],['profit','Profit'],['totalWeight','Total weight'],[null,'']];
+  const hideCosts = State.hideHamperCosts;
+  const cols = [[null,''],['name','Hamper'],[null,'Items'],['packagingName','Packaging'],['shippingName','Shipping'],['totalCost','Total cost'],['totalPrice','Total price'],['profit','Profit'],['totalWeight','Total weight'],[null,'']]
+    .filter(([key])=> !(hideCosts && (key==='totalCost' || key==='profit')));
   return `
     <div class="row-between">
       <div><h1>Hampers</h1><p class="subtitle">Your product recipes — what goes into each hamper.</p></div>
@@ -412,32 +451,33 @@ function renderProducts(){
       <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;">
         <input id="productSearch" placeholder="Search hamper name, items, packaging..." value="${State.productFilter.search}" style="max-width:280px;">
         ${State.productFilter.search ? `<button class="ghost small" id="clearProductFilters">Clear filters</button>` : ''}
+        <label class="inlineCheck"><input type="checkbox" id="hideHamperCosts" ${hideCosts?'checked':''}> Hide cost and profit</label>
       </div>
-      <div style="overflow-x:auto;">
-      ${State.products.length? `<table><thead><tr>
+      ${State.products.length? hscroll(`<table><thead><tr>
           ${cols.map(([key,label])=> key
             ? `<th style="cursor:pointer;" data-sortproductcol="${key}">${label}${productSortArrow(key)}</th>`
             : `<th>${label}</th>`
           ).join('')}
         </tr></thead><tbody>
-        ${rows.length ? rows.map(p=>`<tr>
+        ${rows.length ? rows.map(p=>`<tr class="clickrow" data-rowkind="product" data-rowid="${p.id}">
           <td>${p.photoUrl? `<img src="${p.photoUrl}" class="logoThumb">` : `<div class="logoThumb" style="background:var(--kraft);"></div>`}</td>
           <td><strong>${p.name}</strong></td>
-          <td>${p.components.map(c=>{const s=stockById(c.componentId); return s? `${c.qty} × ${itemName(s)}` : 'unknown';}).join(', ') || '—'}</td>
+          <td style="min-width:220px;">${p.components.map(c=>{const s=stockById(c.componentId); return s? `${c.qty} × ${itemName(s)}` : 'unknown';}).join('<br>') || '—'}</td>
           <td>${p.packagingName || '—'}</td>
           <td>${p.shippingName || '—'}</td>
-          <td>${fmtMoney(p.totalCost)}</td>
+          ${hideCosts ? '' : `<td>${fmtMoney(p.totalCost)}</td>`}
           <td>${fmtMoney(p.totalPrice)}</td>
-          <td>${profitToggleHtml(p.profit)}</td>
+          ${hideCosts ? '' : `<td>${profitToggleHtml(p.profit)}</td>`}
           <td>${p.totalWeight.toFixed(0)} g</td>
-          <td style="white-space:nowrap;">
-            <button class="small ghost" data-editproduct="${p.id}">Edit</button>
-            <button class="small ghost" data-copyproduct="${p.id}">Copy</button>
-            <button class="small danger" data-delproduct="${p.id}">Delete</button>
+          <td>
+            <div class="stackedActions">
+              <button class="small ghost" data-editproduct="${p.id}">Edit</button>
+              <button class="small ghost" data-copyproduct="${p.id}">Copy</button>
+              <button class="small danger" data-delproduct="${p.id}">Delete</button>
+            </div>
           </td>
-        </tr>`).join('') : `<tr><td colspan="10" class="empty">No hampers match this search.</td></tr>`}
-      </tbody></table>` : `<div class="empty">No hampers yet. Add your first hamper recipe.</div>`}
-      </div>
+        </tr>`).join('') : `<tr><td colspan="${cols.length}" class="empty">No hampers match this search.</td></tr>`}
+      </tbody></table>`) : `<div class="empty">No hampers yet. Add your first hamper recipe.</div>`}
     </div>
   `;
 }
@@ -527,8 +567,7 @@ function renderStock(){
         </span>
         ${(State.stockFilter.search || State.stockFilter.category || State.stockFilter.availability || dietOn) ? `<button class="ghost small" id="clearStockFilters">Clear filters</button>` : ''}
       </div>
-      <div style="overflow-x:auto;">
-      ${State.stock.length? `<table><thead><tr>
+      ${State.stock.length? hscroll(`<table><thead><tr>
           ${stockColumns().map(([key,label])=> key
             ? `<th class="sortable" data-sortcol="${key}" style="cursor:pointer;">${label}${sortArrow(key)}</th>`
             : `<th>${label}</th>`
@@ -536,7 +575,7 @@ function renderStock(){
         </tr></thead><tbody>
         ${rows.length ? rows.map(s=>{
           const short = s.reserved > s.qtyOnHand;
-          return `<tr>
+          return `<tr class="clickrow" data-rowkind="stock" data-rowid="${s.id}">
           <td>${s.category||'—'}</td>
           <td>${s.brand||'—'}</td>
           <td>${s.itemName}</td>
@@ -554,8 +593,7 @@ function renderStock(){
             <button class="small danger" data-delstock="${s.id}">Delete</button>
           </td>
         </tr>`;}).join('') : `<tr><td colspan="13" class="empty">No items match these filters.</td></tr>`}
-      </tbody></table>` : `<div class="empty">No items yet. Add the components your hampers are built from.</div>`}
-      </div>
+      </tbody></table>`) : `<div class="empty">No items yet. Add the components your hampers are built from.</div>`}
     </div>
   `;
 }
@@ -629,68 +667,80 @@ function vatRatePercent(vat){
   return 0.20;
 }
 
+// Every price and cost in the app (items, packaging, shipping, per-hamper
+// overrides) is entered INCLUDING VAT, so ex-VAT figures are backed out of
+// them rather than VAT being added on top. vatGroups maps a VAT rate label to
+// the inc-VAT amount charged at that rate. Profit is ex-VAT price minus
+// ex-VAT cost.
+function vatBreakdownFromGroups(vatGroups){
+  return Object.entries(vatGroups).map(([rate,totalIncVat])=>{
+    const pct = vatRatePercent(rate);
+    const subtotal = totalIncVat/(1+pct);
+    return { rate, subtotal, vatAmount: totalIncVat-subtotal, totalIncVat };
+  }).sort((a,b)=> b.totalIncVat-a.totalIncVat);
+}
+
+function exVat(amount, rate){ return amount/(1+vatRatePercent(rate)); }
+
 function computeHamperTotals(p){
-  let cost = 0, priceExVat = 0, weight = 0;
+  let cost = 0, costExVat = 0, weight = 0;
   const vatGroups = {};
   (p.components||[]).forEach(c=>{
     const s = stockById(c.componentId);
     if(!s) return;
     const qty = c.qty||0;
     const linePrice = c.price!=null ? c.price : (s.price||0);
-    cost += (s.cost||0)*qty;
-    priceExVat += linePrice*qty;
-    weight += (parseFloat(s.weight)||0)*qty;
     const rate = s.vat || 'Standard 20%';
+    cost += (s.cost||0)*qty;
+    costExVat += exVat((s.cost||0)*qty, rate);
+    weight += (parseFloat(s.weight)||0)*qty;
     vatGroups[rate] = (vatGroups[rate]||0) + linePrice*qty;
   });
   const pack = p.packagingId ? State.packaging.find(pk=>pk.id===p.packagingId) : null;
   if(pack){
-    cost += pack.cost||0;
-    priceExVat += pack.price||0;
-    weight += (parseFloat(pack.weight)||0)*1000; // packaging weight is stored in kg; items are in g
     const rate = pack.vat || 'Standard 20%';
+    cost += pack.cost||0;
+    costExVat += exVat(pack.cost||0, rate);
+    weight += (parseFloat(pack.weight)||0)*1000; // packaging weight is stored in kg; items are in g
     vatGroups[rate] = (vatGroups[rate]||0) + (pack.price||0);
   }
   const ship = p.shippingId ? State.shipping.find(sh=>sh.id===p.shippingId) : null;
   if(ship){
     // Shipping options only track a customer-facing price + VAT rate, not a
     // separate cost — the carrier price is treated as a pass-through.
-    priceExVat += ship.price||0;
     const rate = ship.vat || 'Standard 20%';
     vatGroups[rate] = (vatGroups[rate]||0) + (ship.price||0);
   }
-  const vatBreakdown = Object.entries(vatGroups).map(([rate,subtotal])=>{
-    const pct = vatRatePercent(rate);
-    const vatAmount = subtotal*pct;
-    return { rate, subtotal, vatAmount, totalIncVat: subtotal+vatAmount };
-  }).sort((a,b)=> b.subtotal-a.subtotal);
+  const vatBreakdown = vatBreakdownFromGroups(vatGroups);
+  const priceExVat = vatBreakdown.reduce((sum,v)=>sum+v.subtotal, 0);
   const totalIncVat = vatBreakdown.reduce((sum,v)=>sum+v.totalIncVat, 0);
-  const profit = priceExVat - cost;
-  return { cost, priceExVat, weight, vatBreakdown, totalIncVat, profit, packaging: pack, shipping: ship };
+  const profit = priceExVat - costExVat;
+  return { cost, costExVat, priceExVat, weight, vatBreakdown, totalIncVat, profit, packaging: pack, shipping: ship };
 }
 
 function computeOrderTotals(o){
-  let cost = 0, priceExVat = 0;
+  let cost = 0, costExVat = 0;
   const vatGroups = {};
+  const lines = []; // one entry per hamper line, for the per-hamper price summary
   o.items.forEach(it=>{
     const p = productById(it.productId);
     if(!p) return;
     const ht = computeHamperTotals(p);
     const qty = it.qty||0;
     cost += ht.cost*qty;
-    priceExVat += ht.priceExVat*qty;
+    costExVat += ht.costExVat*qty;
     ht.vatBreakdown.forEach(v=>{
-      vatGroups[v.rate] = (vatGroups[v.rate]||0) + v.subtotal*qty;
+      vatGroups[v.rate] = (vatGroups[v.rate]||0) + v.totalIncVat*qty;
     });
+    lines.push({ product: p, qty, vatBreakdown: ht.vatBreakdown.map(v=>({
+      rate: v.rate, subtotal: v.subtotal*qty, vatAmount: v.vatAmount*qty, totalIncVat: v.totalIncVat*qty,
+    })) });
   });
-  const vatBreakdown = Object.entries(vatGroups).map(([rate,subtotal])=>{
-    const pct = vatRatePercent(rate);
-    const vatAmount = subtotal*pct;
-    return { rate, subtotal, vatAmount, totalIncVat: subtotal+vatAmount };
-  }).sort((a,b)=> b.subtotal-a.subtotal);
+  const vatBreakdown = vatBreakdownFromGroups(vatGroups);
+  const priceExVat = vatBreakdown.reduce((sum,v)=>sum+v.subtotal, 0);
   const totalIncVat = vatBreakdown.reduce((sum,v)=>sum+v.totalIncVat, 0);
-  const profit = priceExVat - cost;
-  return { cost, priceExVat, vatBreakdown, totalIncVat, profit };
+  const profit = priceExVat - costExVat;
+  return { cost, costExVat, priceExVat, vatBreakdown, totalIncVat, profit, lines };
 }
 
 function computeOrderValue(o){
@@ -937,7 +987,7 @@ function renderPackaging(){
     </div>
     <div class="panel">
       ${rows.length? `<table><thead><tr><th>Size</th><th>Price</th><th>Weight</th><th>Cost</th><th>VAT rate</th><th></th></tr></thead><tbody>
-        ${rows.map(p=>`<tr>
+        ${rows.map(p=>`<tr class="clickrow" data-rowkind="packaging" data-rowid="${p.id}">
           <td>${p.size}</td>
           <td>${fmtMoney(p.price)}</td>
           <td>${p.weight!=null && p.weight!=='' ? p.weight+' kg' : '—'}</td>
@@ -962,7 +1012,7 @@ function renderShipping(){
     </div>
     <div class="panel">
       ${rows.length? `<table><thead><tr><th>Label</th><th>Price</th><th>VAT rate</th><th></th></tr></thead><tbody>
-        ${rows.map(p=>`<tr>
+        ${rows.map(p=>`<tr class="clickrow" data-rowkind="shipping" data-rowid="${p.id}">
           <td>${p.label}</td>
           <td>${fmtMoney(p.price)}</td>
           <td>${p.vat || 'Standard 20%'}</td>
@@ -1006,7 +1056,7 @@ function renderSources(){
     </div>
     <div class="panel">
       ${rows.length? `<table><thead><tr><th>Source</th><th></th></tr></thead><tbody>
-        ${rows.map(s=>`<tr>
+        ${rows.map(s=>`<tr class="clickrow" data-rowkind="source" data-rowid="${s.id}">
           <td>${s.label}</td>
           <td style="white-space:nowrap;">
             <button class="small ghost" data-editsource="${s.id}">Edit</button>
@@ -1027,7 +1077,7 @@ function renderStaff(){
     </div>
     <div class="panel">
       ${rows.length? `<table><thead><tr><th>Username</th><th>Name</th><th>Admin</th><th></th></tr></thead><tbody>
-        ${rows.map(s=>`<tr>
+        ${rows.map(s=>`<tr class="clickrow" data-rowkind="staff" data-rowid="${s.id}">
           <td>${s.username}${s.id===State.me.id? ' <span class="mono">(you)</span>' : ''}</td>
           <td>${s.displayName||'—'}</td>
           <td>${s.isAdmin? 'Yes' : 'No'}</td>
@@ -1061,15 +1111,15 @@ function renderCustomers(){
         <input id="customerSearch" placeholder="Search company, contact, email, phone..." value="${State.customerFilter.search}" style="max-width:280px;">
         ${State.customerFilter.search ? `<button class="ghost small" id="clearCustomerFilters">Clear filters</button>` : ''}
       </div>
-      ${State.customers.length? `<div style="overflow-x:auto;"><table><thead><tr>
+      ${State.customers.length? hscroll(`<table><thead><tr>
           ${cols.map(([key,label])=> key
             ? `<th style="cursor:pointer;" data-sortcustomercol="${key}">${label}${customerSortArrow(key)}</th>`
             : `<th>${label}</th>`
           ).join('')}
         </tr></thead><tbody>
-        ${rows.length ? rows.map(c=>`<tr>
+        ${rows.length ? rows.map(c=>`<tr class="clickrow" data-rowkind="customer" data-rowid="${c.id}">
           <td>${c.logoUrl? `<img src="${c.logoUrl}" class="logoThumb">` : `<div class="logoThumb" style="background:${c.ribbonColor||'#E7DCC4'};"></div>`}</td>
-          <td><strong>${c.companyName}</strong></td>
+          <td><strong>${customerLink(c, c.companyName)}</strong></td>
           <td>${c.contactName||'—'}</td>
           <td>${c.email||'—'}</td>
           <td>${c.phonePrimary||'—'}${c.phoneSecondary? ` / ${c.phoneSecondary}` : ''}</td>
@@ -1082,7 +1132,7 @@ function renderCustomers(){
             <button class="small danger" data-delcustomer="${c.id}">Delete</button>
           </td>
         </tr>`).join('') : `<tr><td colspan="10" class="empty">No customers match this search.</td></tr>`}
-      </tbody></table></div>` : `<div class="empty">No customers yet. Add your first customer.</div>`}
+      </tbody></table>`) : `<div class="empty">No customers yet. Add your first customer.</div>`}
     </div>
   `;
 }
@@ -1347,7 +1397,7 @@ function openProductModal(existing, duplicateFrom){
 
   function itemsDatalist(){
     return `<datalist id="stockItemsDatalist">
-      ${State.stock.map(s=>`<option value="${itemName(s).replace(/"/g,'&quot;')}">`).join('')}
+      ${State.stock.map(s=>`<option value="${itemSearchLabel(s).replace(/"/g,'&quot;')}">`).join('')}
     </datalist>`;
   }
 
@@ -1358,11 +1408,11 @@ function openProductModal(existing, duplicateFrom){
     </div>
     ${p.components.map((c,i)=>{
       const s = stockById(c.componentId);
-      const val = s ? itemName(s) : '';
+      const val = s ? itemSearchLabel(s).replace(/"/g,'&quot;') : '';
       const priceVal = c.price!=null ? c.price : (s? s.price : 0);
       return `
     <div class="comprow">
-      <input type="text" list="stockItemsDatalist" class="compNameInput" data-cidx="${i}" value="${val}" placeholder="Search items...">
+      <input type="text" list="stockItemsDatalist" class="compNameInput" data-cidx="${i}" value="${val}" placeholder="Search item name or brand...">
       <input type="number" step="1" min="0" class="compQty" data-cidx="${i}" value="${c.qty}">
       <input type="number" step="0.01" min="0" class="compPrice" data-cidx="${i}" value="${priceVal}">
       <button class="small danger" data-removecomp="${i}">×</button>
@@ -1372,15 +1422,16 @@ function openProductModal(existing, duplicateFrom){
 
   function totalsHtml(){
     const totals = computeHamperTotals(p);
+    const hideCosts = State.hideHamperCosts;
     return `
       <div class="panel" style="margin-top:14px;background:var(--paper);padding:14px 16px;">
         <div class="grid2">
-          <div><div class="ometa">Total cost</div><div style="font-weight:500;font-size:15px;">${fmtMoney(totals.cost)}</div></div>
+          ${hideCosts ? '' : `<div><div class="ometa">Total cost (inc VAT)</div><div style="font-weight:500;font-size:15px;">${fmtMoney(totals.cost)}</div></div>`}
           <div><div class="ometa">Total weight</div><div style="font-weight:500;font-size:15px;">${totals.weight.toFixed(0)} g</div></div>
         </div>
         <div class="grid2" style="margin-top:10px;">
           <div><div class="ometa">Total price (inc VAT)</div><div style="font-weight:600;font-size:19px;">${fmtMoney(totals.totalIncVat)}</div></div>
-          <div><div class="ometa">Profit</div><div style="font-weight:600;font-size:19px;">${profitToggleHtml(totals.profit,'font-weight:600;font-size:19px;')}</div></div>
+          ${hideCosts ? '' : `<div><div class="ometa">Profit (ex VAT)</div><div style="font-weight:600;font-size:19px;">${profitToggleHtml(totals.profit,'font-weight:600;font-size:19px;')}</div></div>`}
         </div>
         ${totals.vatBreakdown.length? `<table style="margin-top:10px;"><thead><tr><th>VAT rate</th><th>Ex VAT</th><th>VAT</th><th>Inc VAT</th></tr></thead><tbody>
           ${totals.vatBreakdown.map(v=>`<tr><td>${v.rate}</td><td>${fmtMoney(v.subtotal)}</td><td>${fmtMoney(v.vatAmount)}</td><td>${fmtMoney(v.totalIncVat)}</td></tr>`).join('')}
@@ -1395,10 +1446,14 @@ function openProductModal(existing, duplicateFrom){
     wireProfitToggles(el);
   }
 
-  function paint(){
+  function paint(focusCompIdx){
+    // Repainting replaces the modal, so carry its scroll position across
+    // rather than jumping back to the top every time a line changes.
+    const prevModal = document.querySelector('#modalRoot .modal');
+    const prevScroll = prevModal ? prevModal.scrollTop : 0;
     document.getElementById('modalRoot').innerHTML = `
       <div class="modal-overlay" id="ovl">
-        <div class="modal">
+        <div class="modal wide">
           <h3>${existing? 'Edit hamper': duplicateFrom? 'Copy hamper' : 'Add hamper'}</h3>
           ${duplicateFrom? `<div class="savehint" style="margin-bottom:10px;">Copied from "${duplicateOfName}" — give this hamper its own name before saving.</div>` : ''}
           <div class="field"><label>Hamper name</label><input id="f_name" value="${p.name}" placeholder="e.g. The Bishop's Stortford"></div>
@@ -1434,6 +1489,11 @@ function openProductModal(existing, duplicateFrom){
           </div>
         </div>
       </div>`;
+    document.querySelector('#modalRoot .modal').scrollTop = prevScroll;
+    if(focusCompIdx!=null){
+      const inp = document.querySelector(`.compNameInput[data-cidx="${focusCompIdx}"]`);
+      if(inp){ inp.focus({ preventScroll:true }); inp.scrollIntoView({ block:'nearest' }); }
+    }
     document.getElementById('cancelBtn').onclick = closeModal;
     wireProfitToggles(document.getElementById('hamperTotals'));
     document.getElementById('f_name').oninput = (e)=>{ p.name = e.target.value; };
@@ -1453,7 +1513,7 @@ function openProductModal(existing, duplicateFrom){
     if(document.getElementById('addCompBtn')){
       document.getElementById('addCompBtn').onclick = ()=>{
         p.components.push({ componentId: null, qty: 1, price: 0 });
-        paint();
+        paint(p.components.length-1);
       };
     }
     document.querySelectorAll('[data-removecomp]').forEach(b=>{
@@ -1462,8 +1522,9 @@ function openProductModal(existing, duplicateFrom){
     document.querySelectorAll('.compNameInput').forEach(inp=>{
       inp.addEventListener('change', ()=>{
         const idx = parseInt(inp.dataset.cidx);
-        const typed = inp.value.trim();
-        const match = State.stock.find(s => itemName(s).toLowerCase() === typed.toLowerCase());
+        const typed = inp.value.trim().toLowerCase();
+        const match = State.stock.find(s => itemSearchLabel(s).toLowerCase() === typed)
+          || State.stock.find(s => itemName(s).toLowerCase() === typed);
         p.components[idx].componentId = match ? match.id : null;
         p.components[idx].price = match ? match.price : 0;
         paint();
@@ -1540,14 +1601,14 @@ function openCustomerOrdersModal(customerId){
   document.getElementById('modalRoot').innerHTML = `
     <div class="modal-overlay" id="ovl">
       <div class="modal" style="width:520px;">
-        <h3>Orders — ${cust? cust.companyName : 'Unknown customer'}</h3>
+        <h3>Orders — ${cust? customerLink(cust, cust.companyName) : 'Unknown customer'}</h3>
         ${custOrders.length ? custOrders.map(o=>{
           const items = o.items.map(it=>{ const p = productById(it.productId); return `${it.qty} × ${p? p.name : 'Unknown hamper'}`; }).join(', ');
           return `<div class="ordercard" style="cursor:pointer;" data-openorderfrommodal="${o.id}">
             <div class="orow">
               <div>
                 <div class="oname">${items} <span class="mono">#${o.id.slice(-5)}</span></div>
-                <div class="ometa">${o.deliveryDate? 'Delivery: '+o.deliveryDate : ''}</div>
+                <div class="ometa">${o.deliveryDate? 'Dispatch: '+o.deliveryDate : ''}</div>
                 <div style="margin-top:6px;">${statusBadge(o.status)} <span class="mono" style="margin-left:8px;">${fmtMoney(computeOrderValue(o))}</span></div>
               </div>
             </div>
@@ -1559,6 +1620,7 @@ function openCustomerOrdersModal(customerId){
       </div>
     </div>`;
   document.getElementById('cancelBtn').onclick = closeModal;
+  wireCustomerLinks(document.getElementById('modalRoot'));
     document.querySelectorAll('[data-openorderfrommodal]').forEach(card=>{
     card.onclick = ()=>{
       const order = State.orders.find(o=>o.id===card.dataset.openorderfrommodal);
@@ -1741,35 +1803,73 @@ function openOrderModal(existing){
   const o = existing ? JSON.parse(JSON.stringify(existing)) : { id:null, customerId: State.customers[0] ? State.customers[0].id : null, orderDate: todayStr, deliveryDate:'', notes:'', status:'Proposal', readyToInvoice:false, items:[], stockDeducted:false };
 
   function clamp(val, min, max){ return Math.max(min, Math.min(max, val)); }
+  const expanded = new Set(); // hamper line indexes whose item list is open
+
+  function hamperContentsHtml(it){
+    const p = productById(it.productId);
+    if(!p) return '<div class="savehint">Unknown hamper.</div>';
+    const lineQty = it.qty||0;
+    const comps = p.components.map(c=>{
+      const s = stockById(c.componentId);
+      const name = s ? itemSearchLabel(s) : 'Unknown item';
+      const total = (c.qty||0)*lineQty;
+      return `<li>${c.qty} × ${name}${lineQty>1 ? ` <span class="mono">(${total} in total)</span>` : ''}</li>`;
+    }).join('');
+    const pack = p.packagingId ? State.packaging.find(pk=>pk.id===p.packagingId) : null;
+    return `${comps ? `<ul class="hamperContents">${comps}</ul>` : '<div class="savehint">No items in this hamper.</div>'}
+      ${pack ? `<div class="ometa">Packaging: ${pack.size}</div>` : ''}`;
+  }
 
   function renderItems(){
     return `
     <table style="margin-bottom:10px;"><thead><tr><th>Hamper</th><th>Ordered</th><th>Packed</th><th>Shipped</th><th></th></tr></thead><tbody>
-    ${o.items.map((it,i)=>`
+    ${o.items.map((it,i)=>{
+      const p = productById(it.productId);
+      const ship = p && p.shippingId ? State.shipping.find(sh=>sh.id===p.shippingId) : null;
+      const open = expanded.has(i);
+      return `
       <tr>
-        <td><select data-iidx="${i}" class="itemSelect">
-          ${State.products.map(p=>`<option value="${p.id}" ${p.id===it.productId?'selected':''}>${p.name}</option>`).join('')}
-        </select></td>
+        <td>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <button class="small ghost expandBtn" data-toggleitems="${i}" title="${open?'Hide':'Show'} items in this hamper">${open?'▾':'▸'}</button>
+            <select data-iidx="${i}" class="itemSelect">
+              ${State.products.map(p=>`<option value="${p.id}" ${p.id===it.productId?'selected':''}>${p.name}</option>`).join('')}
+            </select>
+          </div>
+          <div class="ometa" style="margin:4px 0 0 36px;">Shipping: ${ship ? `${ship.label} (${fmtMoney(ship.price)})` : 'None'}</div>
+        </td>
         <td><input type="number" step="1" min="0" class="itemQty" data-iidx="${i}" value="${it.qty}" style="width:64px;"></td>
         <td><input type="number" step="1" min="0" max="${it.qty}" class="itemPacked" data-iidx="${i}" value="${it.qtyPacked||0}" style="width:64px;"></td>
         <td><input type="number" step="1" min="0" max="${it.qty}" class="itemShipped" data-iidx="${i}" value="${it.qtyShipped||0}" style="width:64px;"></td>
         <td><button class="small danger" data-removeitem="${i}">×</button></td>
-      </tr>`).join('')}
+      </tr>
+      ${open ? `<tr class="contentsRow"><td colspan="5" style="padding-left:46px;">${hamperContentsHtml(it)}</td></tr>` : ''}`;
+    }).join('')}
     </tbody></table>`;
   }
 
   function orderTotalsHtml(){
     const totals = computeOrderTotals(o);
+    // One block of rows per hamper line (one row per VAT rate in it), then
+    // the order's totals per VAT rate.
+    const lineRows = totals.lines.map(line=>line.vatBreakdown.map((v,vi)=>`<tr${vi===0?' class="groupStart"':''}>
+        ${vi===0 ? `<td rowspan="${line.vatBreakdown.length}">${line.qty} × ${line.product.name}</td>` : ''}
+        <td>${v.rate}</td><td>${fmtMoney(v.subtotal)}</td><td>${fmtMoney(v.vatAmount)}</td><td>${fmtMoney(v.totalIncVat)}</td>
+      </tr>`).join('')).join('');
+    const totalRows = totals.vatBreakdown.map((v,vi)=>`<tr class="totalRow${vi===0?' groupStart':''}">
+        ${vi===0 ? `<td rowspan="${totals.vatBreakdown.length}">Order total</td>` : ''}
+        <td>${v.rate}</td><td>${fmtMoney(v.subtotal)}</td><td>${fmtMoney(v.vatAmount)}</td><td>${fmtMoney(v.totalIncVat)}</td>
+      </tr>`).join('');
     return `
       <div class="panel" style="margin-top:14px;background:var(--paper);padding:14px 16px;">
         <div class="grid2">
-          <div><div class="ometa">Total cost</div><div style="font-weight:500;font-size:15px;">${fmtMoney(totals.cost)}</div></div>
+          <div><div class="ometa">Total cost (inc VAT)</div><div style="font-weight:500;font-size:15px;">${fmtMoney(totals.cost)}</div></div>
           <div><div class="ometa">Total price (inc VAT)</div><div style="font-weight:600;font-size:15px;">${fmtMoney(totals.totalIncVat)}</div></div>
         </div>
-        <div style="margin-top:10px;"><div class="ometa">Profit</div><div style="font-weight:600;font-size:19px;">${profitToggleHtml(totals.profit,'font-weight:600;font-size:19px;')}</div></div>
-        ${totals.vatBreakdown.length? `<table style="margin-top:10px;"><thead><tr><th>VAT rate</th><th>Ex VAT</th><th>VAT</th><th>Inc VAT</th></tr></thead><tbody>
-          ${totals.vatBreakdown.map(v=>`<tr><td>${v.rate}</td><td>${fmtMoney(v.subtotal)}</td><td>${fmtMoney(v.vatAmount)}</td><td>${fmtMoney(v.totalIncVat)}</td></tr>`).join('')}
-        </tbody></table>` : `<div class="savehint">Add hampers to see a price breakdown.</div>`}
+        <div style="margin-top:10px;"><div class="ometa">Profit (ex VAT)</div><div style="font-weight:600;font-size:19px;">${profitToggleHtml(totals.profit,'font-weight:600;font-size:19px;')}</div></div>
+        ${totals.vatBreakdown.length? hscroll(`<table class="priceSummary" style="margin-top:10px;"><thead><tr><th>Hamper</th><th>VAT rate</th><th>Ex VAT</th><th>VAT</th><th>Inc VAT</th></tr></thead><tbody>
+          ${lineRows}${totalRows}
+        </tbody></table>`) : `<div class="savehint">Add hampers to see a price breakdown.</div>`}
       </div>
     `;
   }
@@ -1778,13 +1878,25 @@ function openOrderModal(existing){
     const el = document.getElementById('orderTotals');
     if(el) el.innerHTML = orderTotalsHtml();
     wireProfitToggles(el);
+    wireHScrolls();
+  }
+
+  function customerDetailsHtml(cust){
+    if(!cust) return '';
+    const swatch = (label, colour)=> `<div><div class="ometa">${label}</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:2px;">
+        ${colour ? `<span class="colourSwatch" style="background:${colour.replace(/"/g,'&quot;')};"></span>` : ''}${colour || '—'}
+      </div></div>`;
+    return `<div class="grid2" style="margin-bottom:12px;">${swatch('Ribbon colour', cust.ribbonColor)}${swatch('Font colour', cust.fontColor)}</div>`;
   }
 
   function paint(){
     const selectedCust = customerById(o.customerId);
+    const prevModal = document.querySelector('#modalRoot .modal');
+    const prevScroll = prevModal ? prevModal.scrollTop : 0;
     document.getElementById('modalRoot').innerHTML = `
       <div class="modal-overlay" id="ovl">
-        <div class="modal" style="width:520px;">
+        <div class="modal" style="width:680px;">
           <h3>${existing? 'Edit order':'Add order'}</h3>
           <div class="field">
             <label>Customer</label>
@@ -1794,16 +1906,19 @@ function openOrderModal(existing){
                 ${State.customers.map(c=>`<option value="${customerLabel(c).replace(/"/g,'&quot;')}">`).join('')}
               </datalist>` : `<div class="savehint">No customers yet — add one below.</div>`}
             <button class="linkbtn" id="addCustomerBtn" style="margin-top:4px;">+ Add new customer</button>
+            ${selectedCust ? `<button class="linkbtn" id="editCustomerBtn" style="margin:4px 0 0 12px;">Edit customer</button>` : ''}
           </div>
+          ${customerDetailsHtml(selectedCust)}
           <div class="grid2">
             <div class="field"><label>Order date</label><input id="f_orderdate" type="date" value="${o.orderDate||''}"></div>
-            <div class="field"><label>Delivery date</label><input id="f_date" type="date" value="${o.deliveryDate}"></div>
+            <div class="field"><label>Dispatch date</label><input id="f_date" type="date" value="${o.deliveryDate||''}"></div>
           </div>
           <label>Hampers ordered</label>
           <div id="itemList">${renderItems()}</div>
           ${State.products.length? `<button class="linkbtn" id="addItemBtn">+ Add hamper</button>` : `<div class="savehint">Add a hamper recipe first.</div>`}
           <div id="orderTotals">${orderTotalsHtml()}</div>
-          <div class="field" style="margin-top:12px;"><label>Notes</label><textarea id="f_notes" rows="2">${o.notes}</textarea></div>
+          ${selectedCust && selectedCust.notes ? `<div class="field" style="margin-top:12px;"><label>Customer notes (from the customer record)</label><div class="customerNotes">${selectedCust.notes.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</div></div>` : ''}
+          <div class="field" style="margin-top:12px;"><label>Order notes</label><textarea id="f_notes" rows="2">${o.notes}</textarea></div>
           <div class="field">
             <label style="display:flex;align-items:center;gap:8px;color:var(--text);font-size:13.5px;"><input type="checkbox" id="f_invoice" style="width:auto;" ${o.readyToInvoice?'checked':''}> Ready to invoice</label>
           </div>
@@ -1813,8 +1928,22 @@ function openOrderModal(existing){
           </div>
         </div>
       </div>`;
+    document.querySelector('#modalRoot .modal').scrollTop = prevScroll;
     document.getElementById('cancelBtn').onclick = closeModal;
     wireProfitToggles(document.getElementById('orderTotals'));
+    wireHScrolls();
+    document.querySelectorAll('[data-toggleitems]').forEach(b=>{
+      b.onclick = ()=>{
+        const i = parseInt(b.dataset.toggleitems);
+        if(expanded.has(i)) expanded.delete(i); else expanded.add(i);
+        paint();
+      };
+    });
+    if(document.getElementById('editCustomerBtn')){
+      document.getElementById('editCustomerBtn').onclick = ()=>{
+        openCustomerModal(customerById(o.customerId), { onDone: ()=> paint(), onCancel: ()=> paint() });
+      };
+    }
     document.getElementById('f_orderdate').oninput = (e)=>{ o.orderDate = e.target.value; };
     document.getElementById('f_date').oninput = (e)=>{ o.deliveryDate = e.target.value; };
     document.getElementById('f_notes').oninput = (e)=>{ o.notes = e.target.value; };
@@ -1840,10 +1969,17 @@ function openOrderModal(existing){
       };
     }
     document.querySelectorAll('[data-removeitem]').forEach(b=>{
-      b.onclick = ()=>{ o.items.splice(parseInt(b.dataset.removeitem),1); paint(); };
+      b.onclick = ()=>{
+        const idx = parseInt(b.dataset.removeitem);
+        o.items.splice(idx,1);
+        // keep the open/closed state attached to the lines that remain
+        const shifted = [...expanded].filter(i=>i!==idx).map(i=> i>idx ? i-1 : i);
+        expanded.clear(); shifted.forEach(i=>expanded.add(i));
+        paint();
+      };
     });
     document.querySelectorAll('.itemSelect').forEach(sel=>{
-      sel.onchange = ()=>{ o.items[parseInt(sel.dataset.iidx)].productId = sel.value; refreshOrderTotals(); };
+      sel.onchange = ()=>{ o.items[parseInt(sel.dataset.iidx)].productId = sel.value; paint(); };
     });
     document.querySelectorAll('.itemQty').forEach(inp=>{
       inp.oninput = ()=>{
@@ -1854,6 +1990,7 @@ function openOrderModal(existing){
         o.items[idx].qtyShipped = clamp(o.items[idx].qtyShipped||0, 0, qty);
         refreshOrderTotals();
       };
+      inp.onchange = ()=>{ if(expanded.has(parseInt(inp.dataset.iidx))) paint(); };
     });
     document.querySelectorAll('.itemPacked').forEach(inp=>{
       inp.oninput = ()=>{
@@ -1887,9 +2024,50 @@ function openOrderModal(existing){
   paint();
 }
 
+function openRowEditor(kind, id){
+  const find = (list)=> list.find(x=>x.id===id);
+  if(kind==='order'){ const o = find(State.orders); if(o) openOrderModal(o); }
+  if(kind==='proposal'){ const pr = find(State.proposals); if(pr) openProposalModal(pr); }
+  if(kind==='product'){ const p = find(State.products); if(p) openProductModal(p); }
+  if(kind==='stock'){ const st = find(State.stock); if(st) openStockModal(st); }
+  if(kind==='customer'){ const c = find(State.customers); if(c) openCustomerModal(c); }
+  if(kind==='packaging'){ const pk = find(State.packaging); if(pk) openPackagingModal(pk); }
+  if(kind==='shipping'){ const sh = find(State.shipping); if(sh) openShippingModal(sh); }
+  if(kind==='source'){ const src = find(State.sources); if(src) openSourceModal(src); }
+  if(kind==='staff'){ const st = find(State.staff); if(st) openStaffModal(st); }
+}
+
+function wireCustomerLinks(root){
+  (root||document).querySelectorAll('[data-custlink]').forEach(el=>{
+    el.onclick = (e)=>{
+      e.stopPropagation();
+      const c = customerById(el.dataset.custlink);
+      if(c) openCustomerModal(c);
+    };
+  });
+}
+
 // ---------- Event delegation for dynamically rendered buttons ----------
 function attachHandlers(){
   wireProfitToggles(document);
+  wireHScrolls();
+  wireCustomerLinks(document.getElementById('main'));
+  document.querySelectorAll('#main .clickrow').forEach(row=>{
+    row.onclick = (e)=>{
+      if(e.target.closest(ROW_CLICK_IGNORE)) return;
+      // don't hijack a click-and-drag to select/copy text
+      if(window.getSelection && String(window.getSelection()).length) return;
+      openRowEditor(row.dataset.rowkind, row.dataset.rowid);
+    };
+  });
+  const hideHamperCosts = document.getElementById('hideHamperCosts');
+  if(hideHamperCosts){
+    hideHamperCosts.onchange = (e)=>{
+      State.hideHamperCosts = e.target.checked;
+      try{ localStorage.setItem('hh.hideHamperCosts', e.target.checked ? '1' : ''); }catch(err){ /* not critical */ }
+      render();
+    };
+  }
   const reportSelect = document.getElementById('reportSelect');
   if(reportSelect) reportSelect.onchange = (e)=>{ State.reportSelection = e.target.value; };
   const downloadReportBtn = document.getElementById('downloadReportBtn');
