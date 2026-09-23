@@ -110,10 +110,12 @@
   .modal-overlay{position:fixed;inset:0;background:rgba(177,55,104,0.45);display:flex;align-items:center;justify-content:center;z-index:50;}
   .modal{background:var(--card);border-radius:12px;padding:22px;width:420px;max-width:90vw;max-height:85vh;overflow:auto;}
   .modal h3{font-family:'Fraunces',serif;font-size:17px;margin:0 0 16px;}
-  .comprow{display:flex;gap:8px;align-items:center;margin-bottom:8px;}
-  .comprow select{flex:2;}
-  .comprow input{flex:1;}
-  .comprow input.compNameInput{flex:2;}
+  /* Hamper item rows: a grid, so the heading row and each item row share
+     exactly the same column widths (item, qty, price, remove button). */
+  .comprow{display:grid;grid-template-columns:minmax(0,1fr) 80px 100px 36px;gap:8px;align-items:center;margin-bottom:8px;}
+  .comprow > *{min-width:0;}
+  .comprow.comphead{margin-bottom:4px;}
+  .comprow.comphead > span{padding-left:10px;}
   .linkbtn{background:none;border:none;color:var(--gold);font-size:12.5px;cursor:pointer;padding:4px 0;font-weight:500;}
   .savehint{font-size:11.5px;color:var(--text-muted);margin-top:10px;}
   .toast{position:fixed;bottom:20px;right:20px;background:var(--ink);color:#FBF8F2;padding:10px 16px;border-radius:8px;font-size:13px;z-index:60;opacity:0;transition:opacity 0.25s;}
@@ -143,7 +145,6 @@
   .inlineCheck{display:flex;align-items:center;gap:6px;margin:0;font-size:12.5px;color:var(--text-secondary);cursor:pointer;}
   .inlineCheck input{width:auto;}
   .modal.wide{width:820px;max-width:95vw;}
-  .modal.wide .comprow input.compNameInput{flex:4;}
   .expandBtn{padding:3px 8px;flex:none;}
   .hamperContents{margin:0 0 6px;padding-left:18px;font-size:13px;line-height:1.6;}
   .contentsRow td{background:var(--paper);}

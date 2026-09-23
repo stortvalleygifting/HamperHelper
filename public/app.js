@@ -1403,8 +1403,8 @@ function openProductModal(existing, duplicateFrom){
 
   function renderComps(){
     return `
-    <div class="comprow" style="font-size:11.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">
-      <span style="flex:2;">Item</span><span style="flex:1;">Qty</span><span style="flex:1;">Price (£)</span><span style="width:28px;"></span>
+    <div class="comprow comphead" style="font-size:11.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">
+      <span>Item</span><span>Qty</span><span>Price (£)</span><span></span>
     </div>
     ${p.components.map((c,i)=>{
       const s = stockById(c.componentId);
