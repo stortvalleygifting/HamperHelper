@@ -14,27 +14,24 @@ export function vatRatePercent(vat) {
 
 // Every price and cost is entered INCLUDING VAT, so ex-VAT figures are backed
 // out of them rather than VAT being added on top. Profit is ex-VAT price minus
-// ex-VAT cost. vatGroups maps a VAT rate label to
-// the inc-VAT amount charged at that rate.
-export function vatBreakdownFromGroups(vatGroups) {
-  return Object.entries(vatGroups)
-    .map(([rate, totalIncVat]) => {
-      const pct = vatRatePercent(rate);
-      const subtotal = totalIncVat / (1 + pct);
-      return { rate, subtotal, vatAmount: totalIncVat - subtotal, totalIncVat };
-    })
-    .sort((a, b) => b.totalIncVat - a.totalIncVat);
-}
-
+// ex-VAT cost.
 function exVat(amount, rate) {
   return amount / (1 + vatRatePercent(rate));
 }
 
+function breakdownLine(rate, totalIncVat, extra) {
+  const subtotal = exVat(totalIncVat, rate);
+  return { rate, subtotal, vatAmount: totalIncVat - subtotal, totalIncVat, isShipping: false, ...extra };
+}
+
+// A hamper's price is one line per VAT rate for its goods (items + packaging),
+// where the hamper's priceOverrides can replace a rate's calculated amount,
+// plus a single separate line for shipping at the shipping option's own rate.
 // stockById/packagingById/shippingById are Maps keyed by id.
 export function computeHamperTotals(product, stockById, packagingById, shippingById) {
   let cost = 0;
   let costExVat = 0;
-  const vatGroups = {};
+  const goods = {};
   (product.components || []).forEach((c) => {
     const s = stockById.get(c.componentId);
     if (!s) return;
@@ -43,21 +40,29 @@ export function computeHamperTotals(product, stockById, packagingById, shippingB
     const rate = s.vat || 'Standard 20%';
     cost += (s.cost || 0) * qty;
     costExVat += exVat((s.cost || 0) * qty, rate);
-    vatGroups[rate] = (vatGroups[rate] || 0) + linePrice * qty;
+    goods[rate] = (goods[rate] || 0) + linePrice * qty;
   });
   const pack = product.packagingId ? packagingById.get(product.packagingId) : null;
   if (pack) {
     const rate = pack.vat || 'Standard 20%';
     cost += pack.cost || 0;
     costExVat += exVat(pack.cost || 0, rate);
-    vatGroups[rate] = (vatGroups[rate] || 0) + (pack.price || 0);
+    goods[rate] = (goods[rate] || 0) + (pack.price || 0);
   }
+  const overrides = product.priceOverrides || {};
+  const vatBreakdown = Object.entries(goods)
+    .map(([rate, calculated]) => {
+      const overridden = overrides[rate] != null;
+      return breakdownLine(rate, overridden ? Number(overrides[rate]) : calculated, { calculated, overridden });
+    })
+    .sort((a, b) => b.totalIncVat - a.totalIncVat);
   const ship = product.shippingId ? shippingById.get(product.shippingId) : null;
   if (ship) {
     const rate = ship.vat || 'Standard 20%';
-    vatGroups[rate] = (vatGroups[rate] || 0) + (ship.price || 0);
+    cost += ship.cost || 0;
+    costExVat += exVat(ship.cost || 0, rate);
+    vatBreakdown.push(breakdownLine(rate, ship.price || 0, { isShipping: true, calculated: ship.price || 0, overridden: false }));
   }
-  const vatBreakdown = vatBreakdownFromGroups(vatGroups);
   const priceExVat = vatBreakdown.reduce((sum, v) => sum + v.subtotal, 0);
   const totalIncVat = vatBreakdown.reduce((sum, v) => sum + v.totalIncVat, 0);
   return { cost, costExVat, priceExVat, vatBreakdown, totalIncVat, profit: priceExVat - costExVat };

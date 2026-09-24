@@ -16,6 +16,22 @@ async function listProducts() {
   return products.map((p) => productToApi(p, byProduct.get(p.id) || []));
 }
 
+function photoUrlsFromBody(body) {
+  const urls = Array.isArray(body.photoUrls) ? body.photoUrls : body.photoUrl ? [body.photoUrl] : [];
+  return urls.filter((u) => typeof u === 'string' && u);
+}
+
+// Keep only rate -> finite, non-negative amount entries.
+function priceOverridesFromBody(body) {
+  const out = {};
+  const raw = body.priceOverrides && typeof body.priceOverrides === 'object' ? body.priceOverrides : {};
+  for (const [rate, amount] of Object.entries(raw)) {
+    const n = Number(amount);
+    if (amount !== null && amount !== '' && Number.isFinite(n) && n >= 0) out[rate] = Math.round(n * 100) / 100;
+  }
+  return out;
+}
+
 async function saveComponents(client, productId, components) {
   await client.query('DELETE FROM product_components WHERE product_id = $1', [productId]);
   for (const c of components || []) {
@@ -38,13 +54,11 @@ router.post('/', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query('INSERT INTO products (id, name, packaging_id, shipping_id, photo_url) VALUES ($1,$2,$3,$4,$5)', [
-      id,
-      name,
-      req.body.packagingId || null,
-      req.body.shippingId || null,
-      req.body.photoUrl || '',
-    ]);
+    const photoUrls = photoUrlsFromBody(req.body);
+    await client.query(
+      'INSERT INTO products (id, name, packaging_id, shipping_id, photo_url, photo_urls, price_overrides) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+      [id, name, req.body.packagingId || null, req.body.shippingId || null, photoUrls[0] || '', JSON.stringify(photoUrls), JSON.stringify(priceOverridesFromBody(req.body))]
+    );
     await saveComponents(client, id, req.body.components);
     await client.query('COMMIT');
   } catch (err) {
@@ -62,13 +76,11 @@ router.put('/:id', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const { rowCount } = await client.query('UPDATE products SET name=$1, packaging_id=$2, shipping_id=$3, photo_url=$4 WHERE id=$5', [
-      name,
-      req.body.packagingId || null,
-      req.body.shippingId || null,
-      req.body.photoUrl || '',
-      req.params.id,
-    ]);
+    const photoUrls = photoUrlsFromBody(req.body);
+    const { rowCount } = await client.query(
+      'UPDATE products SET name=$1, packaging_id=$2, shipping_id=$3, photo_url=$4, photo_urls=$5, price_overrides=$6 WHERE id=$7',
+      [name, req.body.packagingId || null, req.body.shippingId || null, photoUrls[0] || '', JSON.stringify(photoUrls), JSON.stringify(priceOverridesFromBody(req.body)), req.params.id]
+    );
     if (!rowCount) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Hamper not found' });

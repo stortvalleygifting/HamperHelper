@@ -19,7 +19,9 @@ function fromBody(body) {
     is_vegan: !!body.vg,
     is_gluten_free: !!body.g,
     contains_nuts: !!body.n,
-    cost: Number(body.cost) || 0,
+    // null = not sent (non-admin staff never see or send costs): keep the
+    // stored cost on update, 0 on insert.
+    cost: body.cost === undefined ? null : Number(body.cost) || 0,
     price: Number(body.price) || 0,
     weight: body.weight === '' || body.weight == null ? null : Number(body.weight),
     vat: body.vat || 'Standard 20%',
@@ -42,7 +44,7 @@ router.post('/', async (req, res) => {
   await pool.query(
     `INSERT INTO stock_items (id, brand, item_name, category, is_veg, is_vegan, is_gluten_free, contains_nuts, cost, price, weight, vat, availability, qty_on_hand, qty_on_order)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-    [id, f.brand, f.item_name, f.category, f.is_veg, f.is_vegan, f.is_gluten_free, f.contains_nuts, f.cost, f.price, f.weight, f.vat, f.availability, f.qty_on_hand, f.qty_on_order]
+    [id, f.brand, f.item_name, f.category, f.is_veg, f.is_vegan, f.is_gluten_free, f.contains_nuts, f.cost ?? 0, f.price, f.weight, f.vat, f.availability, f.qty_on_hand, f.qty_on_order]
   );
   res.status(201).json(await listStock());
 });
@@ -53,7 +55,7 @@ router.put('/:id', async (req, res) => {
   }
   const f = fromBody(req.body);
   const { rowCount } = await pool.query(
-    `UPDATE stock_items SET brand=$1, item_name=$2, category=$3, is_veg=$4, is_vegan=$5, is_gluten_free=$6, contains_nuts=$7, cost=$8, price=$9, weight=$10, vat=$11, availability=$12, qty_on_hand=$13, qty_on_order=$14
+    `UPDATE stock_items SET brand=$1, item_name=$2, category=$3, is_veg=$4, is_vegan=$5, is_gluten_free=$6, contains_nuts=$7, cost=COALESCE($8, cost), price=$9, weight=$10, vat=$11, availability=$12, qty_on_hand=$13, qty_on_order=$14
      WHERE id=$15`,
     [f.brand, f.item_name, f.category, f.is_veg, f.is_vegan, f.is_gluten_free, f.contains_nuts, f.cost, f.price, f.weight, f.vat, f.availability, f.qty_on_hand, f.qty_on_order, req.params.id]
   );
@@ -105,7 +107,7 @@ router.post('/import', async (req, res) => {
       }
       if (existing) {
         await client.query(
-          `UPDATE stock_items SET brand=$1, item_name=$2, category=$3, is_veg=$4, is_vegan=$5, is_gluten_free=$6, contains_nuts=$7, cost=$8, price=$9, weight=$10, vat=$11, availability=$12, qty_on_hand=$13, qty_on_order=$14
+          `UPDATE stock_items SET brand=$1, item_name=$2, category=$3, is_veg=$4, is_vegan=$5, is_gluten_free=$6, contains_nuts=$7, cost=COALESCE($8, cost), price=$9, weight=$10, vat=$11, availability=$12, qty_on_hand=$13, qty_on_order=$14
            WHERE id=$15`,
           [f.brand, f.item_name, f.category, f.is_veg, f.is_vegan, f.is_gluten_free, f.contains_nuts, f.cost, f.price, f.weight, f.vat, f.availability, f.qty_on_hand, f.qty_on_order, id]
         );
@@ -115,7 +117,7 @@ router.post('/import', async (req, res) => {
         await client.query(
           `INSERT INTO stock_items (id, brand, item_name, category, is_veg, is_vegan, is_gluten_free, contains_nuts, cost, price, weight, vat, availability, qty_on_hand, qty_on_order)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-          [id, f.brand, f.item_name, f.category, f.is_veg, f.is_vegan, f.is_gluten_free, f.contains_nuts, f.cost, f.price, f.weight, f.vat, f.availability, f.qty_on_hand, f.qty_on_order]
+          [id, f.brand, f.item_name, f.category, f.is_veg, f.is_vegan, f.is_gluten_free, f.contains_nuts, f.cost ?? 0, f.price, f.weight, f.vat, f.availability, f.qty_on_hand, f.qty_on_order]
         );
         added++;
       }

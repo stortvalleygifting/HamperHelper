@@ -48,6 +48,72 @@ window.addEventListener('resize', ()=>{
   document.querySelectorAll('.hscroll').forEach(wrap=>{ if(wrap._sizeBar) wrap._sizeBar(); });
 });
 
+// Type-to-search picker used instead of <datalist>, which some browsers
+// (Safari) only match from the start of the text. Matches every typed word
+// anywhere in an option's search text. opts: { options: () => [{ id, label,
+// text }], onPick(id), onNoMatch() }.
+function attachSearchBox(input, opts){
+  let list = null, matches = [], active = 0;
+  const close = ()=>{ if(list){ list.remove(); list = null; } };
+  const pick = (opt)=>{ input.value = opt.label; close(); opts.onPick(opt.id); };
+  const open = ()=>{
+    const all = opts.options();
+    const q = input.value.trim().toLowerCase();
+    const exact = all.some(o=>o.label.toLowerCase()===q);
+    const terms = exact ? [] : q.split(/\s+/).filter(Boolean);
+    matches = all.filter(o=> terms.every(t=> (o.label+' '+(o.text||'')).toLowerCase().includes(t))).slice(0,60);
+    active = 0;
+    if(!list){
+      list = document.createElement('div');
+      list.className = 'searchList';
+      document.body.appendChild(list);
+    }
+    const r = input.getBoundingClientRect();
+    const below = window.innerHeight - r.bottom;
+    list.style.left = r.left + 'px';
+    list.style.width = r.width + 'px';
+    if(below < 220 && r.top > below){ list.style.top = ''; list.style.bottom = (window.innerHeight - r.top + 2) + 'px'; }
+    else { list.style.bottom = ''; list.style.top = (r.bottom + 2) + 'px'; }
+    list.innerHTML = matches.length
+      ? matches.map((o,i)=>`<div class="searchOpt${i===active?' active':''}" data-i="${i}">${o.label}</div>`).join('')
+      : `<div class="searchEmpty">No matches</div>`;
+    list.querySelectorAll('.searchOpt').forEach(el=>{
+      el.onmousedown = (e)=>{ e.preventDefault(); pick(matches[parseInt(el.dataset.i)]); };
+    });
+  };
+  const highlight = ()=>{
+    if(!list) return;
+    list.querySelectorAll('.searchOpt').forEach((el,i)=>{
+      el.classList.toggle('active', i===active);
+      if(i===active) el.scrollIntoView({ block:'nearest' });
+    });
+  };
+  input.setAttribute('autocomplete','off');
+  input.addEventListener('focus', open);
+  input.addEventListener('input', open);
+  input.addEventListener('keydown', (e)=>{
+    if(!list) return;
+    if(e.key==='ArrowDown'){ e.preventDefault(); active = Math.min(active+1, matches.length-1); highlight(); }
+    else if(e.key==='ArrowUp'){ e.preventDefault(); active = Math.max(active-1, 0); highlight(); }
+    else if(e.key==='Enter'){ if(matches[active]){ e.preventDefault(); pick(matches[active]); } }
+    else if(e.key==='Escape'){ e.stopPropagation(); close(); }
+  });
+  input.addEventListener('blur', ()=>{
+    if(!list) return; // closed by a pick
+    close();
+    const typed = input.value.trim().toLowerCase();
+    const match = opts.options().find(o=>o.label.toLowerCase()===typed);
+    if(match) opts.onPick(match.id); else opts.onNoMatch();
+  });
+  // The list is positioned against the window, so drop it if anything scrolls.
+  const modal = input.closest('.modal');
+  if(modal) modal.addEventListener('scroll', ()=>{ if(list && document.activeElement!==input) close(); });
+}
+
+function customerSearchOptions(){
+  return State.customers.map(c=>({ id: c.id, label: customerLabel(c), text: [c.contactName2, c.email, c.email2].filter(Boolean).join(' ') }));
+}
+
 // Clicking a customer's name anywhere opens their edit screen.
 function customerLink(cust, text){
   if(!cust) return text;
@@ -57,6 +123,10 @@ function customerLink(cust, text){
 // Clicks on these inside a clickable row do their own thing rather than
 // opening the row's edit screen.
 const ROW_CLICK_IGNORE = 'button,a,input,select,textarea,label,.profitToggle,.custLink';
+
+// Cost and profit figures are for admins only (the server also withholds
+// the underlying costs from everyone else).
+function canSeeCosts(){ return !!(State.me && State.me.isAdmin); }
 
 function showToast(msg){
   const t = document.getElementById('toast');
@@ -218,9 +288,9 @@ function renderDashboard(){
     <h1>Dashboard</h1>
     <p class="subtitle">Where things stand right now.</p>
     <div class="statrow">
-      <div class="stat"><div class="num">${proposalCount}</div><div class="lbl">Proposals</div></div>
-      <div class="stat"><div class="num">${packingCount}</div><div class="lbl">Packing</div></div>
-      <div class="stat"><div class="num">${open.length}</div><div class="lbl">Open orders total</div></div>
+      <div class="stat clickable" data-gotab="proposals"><div class="num">${proposalCount}</div><div class="lbl">Proposals</div></div>
+      <div class="stat clickable" data-gotab="production"><div class="num">${packingCount}</div><div class="lbl">Packing</div></div>
+      <div class="stat clickable" data-gotab="orders"><div class="num">${open.length}</div><div class="lbl">Open orders total</div></div>
       <div class="stat ${lowStock.length?'warn':''}"><div class="num">${lowStock.length}</div><div class="lbl">Items need attention</div></div>
     </div>
     <div class="panel">
@@ -247,7 +317,7 @@ function orderCard(o, compact){
   const nextLabel = FORWARD_LABELS[o.status];
   const backLabel = BACKWARD_LABELS[o.status];
   const totals = computeOrderTotals(o);
-  const vatLine = totals.vatBreakdown.length>1 ? totals.vatBreakdown.map(v=>`${v.rate}: ${fmtMoney(v.totalIncVat)}`).join(' · ') : '';
+  const vatLine = totals.vatBreakdown.length>1 ? totals.vatBreakdown.map(v=>`${breakdownLabel(v)}: ${fmtMoney(v.totalIncVat)}`).join(' · ') : '';
   return `
     <div class="ordercard clickrow" data-rowkind="order" data-rowid="${o.id}">
       <div class="orow">
@@ -255,7 +325,7 @@ function orderCard(o, compact){
           <div class="oname">${swatch}${customerLink(cust, custLabel)} <span class="mono">#${o.id.slice(-5)}</span></div>
           <div class="ometa">${prod}</div>
           <div class="ometa">${o.orderDate ? 'Ordered: '+o.orderDate : ''} ${o.deliveryDate ? ' · Dispatch: '+o.deliveryDate : ''} ${o.notes ? ' · '+o.notes : ''}</div>
-          <div class="ometa">Cost: ${fmtMoney(totals.cost)} &nbsp;·&nbsp; Price: ${fmtMoney(totals.totalIncVat)} (inc VAT) &nbsp;·&nbsp; Profit: ${profitToggleHtml(totals.profit)} (ex VAT)</div>
+          <div class="ometa">${canSeeCosts() ? `Cost: ${fmtMoney(totals.cost)} &nbsp;·&nbsp; ` : ''}Price: ${fmtMoney(totals.totalIncVat)} (inc VAT)${canSeeCosts() ? ` &nbsp;·&nbsp; Profit: ${profitToggleHtml(totals.profit)} (ex VAT)` : ''}</div>
           ${vatLine ? `<div class="ometa" style="color:var(--text-muted);">${vatLine}</div>` : ''}
           <div style="margin-top:6px;">${statusBadge(o.status)} ${o.readyToInvoice ? `<span class="badge invoice">Ready to invoice</span>` : ''}</div>
         </div>
@@ -345,6 +415,7 @@ function getFilteredSortedOrders(){
 function renderOrders(){
   if(!State.orderFilter) State.orderFilter = { search:'', status:'', readyToInvoice:'' };
   if(!State.orderSort) State.orderSort = { col:'orderDate', dir:'desc' };
+  if(!canSeeCosts() && (State.orderSort.col==='totalCost' || State.orderSort.col==='totalProfit')) State.orderSort.col = 'orderDate';
   const rows = getFilteredSortedOrders();
   return `
     <div class="row-between">
@@ -370,9 +441,9 @@ function renderOrders(){
           <option value="deliveryDate" ${State.orderSort.col==='deliveryDate'?'selected':''}>Sort: Dispatch date</option>
           <option value="customer" ${State.orderSort.col==='customer'?'selected':''}>Sort: Customer</option>
           <option value="status" ${State.orderSort.col==='status'?'selected':''}>Sort: Status</option>
-          <option value="totalCost" ${State.orderSort.col==='totalCost'?'selected':''}>Sort: Total cost</option>
+          ${canSeeCosts() ? `<option value="totalCost" ${State.orderSort.col==='totalCost'?'selected':''}>Sort: Total cost</option>` : ''}
           <option value="totalPrice" ${State.orderSort.col==='totalPrice'?'selected':''}>Sort: Total price</option>
-          <option value="totalProfit" ${State.orderSort.col==='totalProfit'?'selected':''}>Sort: Total profit</option>
+          ${canSeeCosts() ? `<option value="totalProfit" ${State.orderSort.col==='totalProfit'?'selected':''}>Sort: Total profit</option>` : ''}
         </select>
         <button class="ghost small" id="orderSortDir">${State.orderSort.dir==='asc' ? '↑ Asc' : '↓ Desc'}</button>
       </div>
@@ -439,7 +510,7 @@ function renderProducts(){
   if(!State.productFilter) State.productFilter = { search:'' };
   if(!State.productSort) State.productSort = { col:'name', dir:'asc' };
   const rows = getFilteredSortedProducts();
-  const hideCosts = State.hideHamperCosts;
+  const hideCosts = State.hideHamperCosts || !canSeeCosts();
   const cols = [[null,''],['name','Hamper'],[null,'Items'],['packagingName','Packaging'],['shippingName','Shipping'],['totalCost','Total cost'],['totalPrice','Total price'],['profit','Profit'],['totalWeight','Total weight'],[null,'']]
     .filter(([key])=> !(hideCosts && (key==='totalCost' || key==='profit')));
   return `
@@ -451,7 +522,7 @@ function renderProducts(){
       <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;">
         <input id="productSearch" placeholder="Search hamper name, items, packaging..." value="${State.productFilter.search}" style="max-width:280px;">
         ${State.productFilter.search ? `<button class="ghost small" id="clearProductFilters">Clear filters</button>` : ''}
-        <label class="inlineCheck"><input type="checkbox" id="hideHamperCosts" ${hideCosts?'checked':''}> Hide cost and profit</label>
+        ${canSeeCosts() ? `<label class="inlineCheck"><input type="checkbox" id="hideHamperCosts" ${hideCosts?'checked':''}> Hide cost and profit</label>` : ''}
       </div>
       ${State.products.length? hscroll(`<table><thead><tr>
           ${cols.map(([key,label])=> key
@@ -460,7 +531,7 @@ function renderProducts(){
           ).join('')}
         </tr></thead><tbody>
         ${rows.length ? rows.map(p=>`<tr class="clickrow" data-rowkind="product" data-rowid="${p.id}">
-          <td>${p.photoUrl? `<img src="${p.photoUrl}" class="logoThumb">` : `<div class="logoThumb" style="background:var(--kraft);"></div>`}</td>
+          <td>${p.photoUrl? `<img src="${p.photoUrl}" class="logoThumb">` : `<div class="logoThumb" style="background:var(--kraft);"></div>`}${(p.photoUrls||[]).length>1 ? `<div class="mono" style="text-align:center;">+${p.photoUrls.length-1}</div>` : ''}</td>
           <td><strong>${p.name}</strong></td>
           <td style="min-width:220px;">${p.components.map(c=>{const s=stockById(c.componentId); return s? `${c.qty} × ${itemName(s)}` : 'unknown';}).join('<br>') || '—'}</td>
           <td>${p.packagingName || '—'}</td>
@@ -525,7 +596,7 @@ function dietTags(s){
 function stockColumns(){
   return [
     ['category','Category'], ['brand','Brand'], ['itemName','Item name'], [null,'Diet'],
-    ['cost','Cost'], ['price','Price'], ['weight','Weight'], ['vat','VAT'],
+    ...(canSeeCosts() ? [['cost','Cost']] : []), ['price','Price'], ['weight','Weight'], ['vat','VAT'],
     ['availability','Availability'], ['qtyOnHand','On hand'], ['qtyOnOrder','On order'], ['reserved','Reserved'], [null,'']
   ];
 }
@@ -580,19 +651,20 @@ function renderStock(){
           <td>${s.brand||'—'}</td>
           <td>${s.itemName}</td>
           <td>${dietTags(s)}</td>
-          <td>${fmtMoney(s.cost)}</td>
+          ${canSeeCosts() ? `<td>${fmtMoney(s.cost)}</td>` : ''}
           <td>${fmtMoney(s.price)}</td>
           <td>${s.weight!=null && s.weight!=='' ? s.weight+' g' : '—'}</td>
-          <td>${s.vat||'—'}</td>
+          <td>${s.vat ? vatPctLabel(s.vat) : '—'}</td>
           <td>${s.availability||'—'}</td>
           <td>${s.qtyOnHand||0}</td>
           <td>${s.qtyOnOrder||0}</td>
           <td>${s.reserved} ${short? `<span class="badge low">Short</span>`:''}</td>
           <td style="white-space:nowrap;">
             <button class="small ghost" data-editstock="${s.id}">Edit</button>
+            <button class="small ghost" data-copystock="${s.id}">Copy</button>
             <button class="small danger" data-delstock="${s.id}">Delete</button>
           </td>
-        </tr>`;}).join('') : `<tr><td colspan="13" class="empty">No items match these filters.</td></tr>`}
+        </tr>`;}).join('') : `<tr><td colspan="${stockColumns().length}" class="empty">No items match these filters.</td></tr>`}
       </tbody></table>`) : `<div class="empty">No items yet. Add the components your hampers are built from.</div>`}
     </div>
   `;
@@ -605,7 +677,7 @@ function downloadStockCsv(){
   if(!rows.length){ showToast('No items to export'); return; }
   const csv = Papa.unparse(rows.map(s => {
     const row = {};
-    STOCK_CSV_FIELDS.forEach(f => { row[f] = s[f] !== undefined ? s[f] : ''; });
+    STOCK_CSV_FIELDS.filter(f => f!=='cost' || canSeeCosts()).forEach(f => { row[f] = s[f] !== undefined ? s[f] : ''; });
     return row;
   }));
   const blob = new Blob([csv], { type:'text/csv' });
@@ -657,6 +729,17 @@ async function uploadStockCsv(file){
   });
 }
 
+// VAT rates are stored as "Standard 20%" etc. but shown as just "20%".
+function vatPctLabel(rate){
+  if((rate||'').toLowerCase().includes('exempt')) return 'Exempt';
+  return Math.round(vatRatePercent(rate)*100) + '%';
+}
+function breakdownLabel(v){ return v.isShipping ? `Shipping (${vatPctLabel(v.rate)})` : vatPctLabel(v.rate); }
+const VAT_OPTIONS = ['Standard 20%','Reduced 5%','Zero 0%','Exempt'];
+function vatOptionsHtml(selected){
+  return VAT_OPTIONS.map(v=>`<option value="${v}" ${(selected||'Standard 20%')===v?'selected':''}>${vatPctLabel(v)}</option>`).join('');
+}
+
 function vatRatePercent(vat){
   if(!vat) return 0.20;
   const v = vat.toLowerCase();
@@ -669,22 +752,21 @@ function vatRatePercent(vat){
 
 // Every price and cost in the app (items, packaging, shipping, per-hamper
 // overrides) is entered INCLUDING VAT, so ex-VAT figures are backed out of
-// them rather than VAT being added on top. vatGroups maps a VAT rate label to
-// the inc-VAT amount charged at that rate. Profit is ex-VAT price minus
-// ex-VAT cost.
-function vatBreakdownFromGroups(vatGroups){
-  return Object.entries(vatGroups).map(([rate,totalIncVat])=>{
-    const pct = vatRatePercent(rate);
-    const subtotal = totalIncVat/(1+pct);
-    return { rate, subtotal, vatAmount: totalIncVat-subtotal, totalIncVat };
-  }).sort((a,b)=> b.totalIncVat-a.totalIncVat);
-}
-
+// them rather than VAT being added on top. Profit is ex-VAT price minus
+// ex-VAT cost. Keep in sync with server/src/lib/pricing.js.
 function exVat(amount, rate){ return amount/(1+vatRatePercent(rate)); }
 
+function breakdownLine(rate, totalIncVat, extra){
+  const subtotal = exVat(totalIncVat, rate);
+  return Object.assign({ rate, subtotal, vatAmount: totalIncVat-subtotal, totalIncVat, isShipping:false }, extra||{});
+}
+
+// A hamper's price is one line per VAT rate for its goods (items + packaging),
+// where p.priceOverrides can replace a rate's calculated amount, plus a single
+// separate line for shipping at the shipping option's own VAT rate.
 function computeHamperTotals(p){
   let cost = 0, costExVat = 0, weight = 0;
-  const vatGroups = {};
+  const goods = {};
   (p.components||[]).forEach(c=>{
     const s = stockById(c.componentId);
     if(!s) return;
@@ -694,7 +776,7 @@ function computeHamperTotals(p){
     cost += (s.cost||0)*qty;
     costExVat += exVat((s.cost||0)*qty, rate);
     weight += (parseFloat(s.weight)||0)*qty;
-    vatGroups[rate] = (vatGroups[rate]||0) + linePrice*qty;
+    goods[rate] = (goods[rate]||0) + linePrice*qty;
   });
   const pack = p.packagingId ? State.packaging.find(pk=>pk.id===p.packagingId) : null;
   if(pack){
@@ -702,16 +784,20 @@ function computeHamperTotals(p){
     cost += pack.cost||0;
     costExVat += exVat(pack.cost||0, rate);
     weight += (parseFloat(pack.weight)||0)*1000; // packaging weight is stored in kg; items are in g
-    vatGroups[rate] = (vatGroups[rate]||0) + (pack.price||0);
+    goods[rate] = (goods[rate]||0) + (pack.price||0);
   }
+  const overrides = p.priceOverrides || {};
+  const vatBreakdown = Object.entries(goods).map(([rate, calculated])=>{
+    const overridden = overrides[rate]!=null;
+    return breakdownLine(rate, overridden ? Number(overrides[rate]) : calculated, { calculated, overridden });
+  }).sort((a,b)=> b.totalIncVat-a.totalIncVat);
   const ship = p.shippingId ? State.shipping.find(sh=>sh.id===p.shippingId) : null;
   if(ship){
-    // Shipping options only track a customer-facing price + VAT rate, not a
-    // separate cost — the carrier price is treated as a pass-through.
     const rate = ship.vat || 'Standard 20%';
-    vatGroups[rate] = (vatGroups[rate]||0) + (ship.price||0);
+    cost += ship.cost||0;
+    costExVat += exVat(ship.cost||0, rate);
+    vatBreakdown.push(breakdownLine(rate, ship.price||0, { isShipping:true, calculated: ship.price||0, overridden:false }));
   }
-  const vatBreakdown = vatBreakdownFromGroups(vatGroups);
   const priceExVat = vatBreakdown.reduce((sum,v)=>sum+v.subtotal, 0);
   const totalIncVat = vatBreakdown.reduce((sum,v)=>sum+v.totalIncVat, 0);
   const profit = priceExVat - costExVat;
@@ -720,7 +806,7 @@ function computeHamperTotals(p){
 
 function computeOrderTotals(o){
   let cost = 0, costExVat = 0;
-  const vatGroups = {};
+  const groups = {}; // goods per VAT rate, and shipping per VAT rate, kept apart
   const lines = []; // one entry per hamper line, for the per-hamper price summary
   o.items.forEach(it=>{
     const p = productById(it.productId);
@@ -730,13 +816,17 @@ function computeOrderTotals(o){
     cost += ht.cost*qty;
     costExVat += ht.costExVat*qty;
     ht.vatBreakdown.forEach(v=>{
-      vatGroups[v.rate] = (vatGroups[v.rate]||0) + v.totalIncVat*qty;
+      const key = (v.isShipping ? 'ship|' : 'goods|') + v.rate;
+      groups[key] = (groups[key]||0) + v.totalIncVat*qty;
     });
-    lines.push({ product: p, qty, vatBreakdown: ht.vatBreakdown.map(v=>({
-      rate: v.rate, subtotal: v.subtotal*qty, vatAmount: v.vatAmount*qty, totalIncVat: v.totalIncVat*qty,
+    lines.push({ product: p, qty, vatBreakdown: ht.vatBreakdown.map(v=>Object.assign({}, v, {
+      subtotal: v.subtotal*qty, vatAmount: v.vatAmount*qty, totalIncVat: v.totalIncVat*qty,
     })) });
   });
-  const vatBreakdown = vatBreakdownFromGroups(vatGroups);
+  const vatBreakdown = Object.entries(groups).map(([key, amount])=>{
+    const [kind, rate] = [key.slice(0, key.indexOf('|')), key.slice(key.indexOf('|')+1)];
+    return breakdownLine(rate, amount, { isShipping: kind==='ship' });
+  }).sort((a,b)=> (a.isShipping - b.isShipping) || (b.totalIncVat - a.totalIncVat));
   const priceExVat = vatBreakdown.reduce((sum,v)=>sum+v.subtotal, 0);
   const totalIncVat = vatBreakdown.reduce((sum,v)=>sum+v.totalIncVat, 0);
   const profit = priceExVat - costExVat;
@@ -982,17 +1072,17 @@ function renderPackaging(){
   const rows = State.packaging.slice().sort((a,b)=> a.size.localeCompare(b.size));
   return `
     <div class="row-between">
-      <div><h1>Packaging</h1><p class="subtitle">Box sizes and their price, weight, and cost.</p></div>
+      <div><h1>Packaging</h1><p class="subtitle">Box sizes and their price, weight${canSeeCosts() ? ', and cost' : ''}.</p></div>
       <button class="primary" id="newPackagingBtn">Add packaging</button>
     </div>
     <div class="panel">
-      ${rows.length? `<table><thead><tr><th>Size</th><th>Price</th><th>Weight</th><th>Cost</th><th>VAT rate</th><th></th></tr></thead><tbody>
+      ${rows.length? `<table><thead><tr><th>Size</th><th>Price</th><th>Weight</th>${canSeeCosts() ? '<th>Cost</th>' : ''}<th>VAT rate</th><th></th></tr></thead><tbody>
         ${rows.map(p=>`<tr class="clickrow" data-rowkind="packaging" data-rowid="${p.id}">
           <td>${p.size}</td>
           <td>${fmtMoney(p.price)}</td>
           <td>${p.weight!=null && p.weight!=='' ? p.weight+' kg' : '—'}</td>
-          <td>${p.cost!=null && p.cost!=='' ? fmtMoney(p.cost) : '—'}</td>
-          <td>${p.vat || 'Standard 20%'}</td>
+          ${canSeeCosts() ? `<td>${p.cost!=null && p.cost!=='' ? fmtMoney(p.cost) : '—'}</td>` : ''}
+          <td>${vatPctLabel(p.vat || 'Standard 20%')}</td>
           <td style="white-space:nowrap;">
             <button class="small ghost" data-editpackaging="${p.id}">Edit</button>
             <button class="small danger" data-delpackaging="${p.id}">Delete</button>
@@ -1007,15 +1097,16 @@ function renderShipping(){
   const rows = State.shipping.slice().sort((a,b)=> a.label.localeCompare(b.label));
   return `
     <div class="row-between">
-      <div><h1>Shipping</h1><p class="subtitle">Shipping options and their price.</p></div>
+      <div><h1>Shipping</h1><p class="subtitle">Shipping options and their price${canSeeCosts() ? ' and cost' : ''}.</p></div>
       <button class="primary" id="newShippingBtn">Add shipping</button>
     </div>
     <div class="panel">
-      ${rows.length? `<table><thead><tr><th>Label</th><th>Price</th><th>VAT rate</th><th></th></tr></thead><tbody>
+      ${rows.length? `<table><thead><tr><th>Label</th><th>Price</th>${canSeeCosts() ? '<th>Cost</th>' : ''}<th>VAT rate</th><th></th></tr></thead><tbody>
         ${rows.map(p=>`<tr class="clickrow" data-rowkind="shipping" data-rowid="${p.id}">
           <td>${p.label}</td>
           <td>${fmtMoney(p.price)}</td>
-          <td>${p.vat || 'Standard 20%'}</td>
+          ${canSeeCosts() ? `<td>${p.cost!=null && p.cost!=='' ? fmtMoney(p.cost) : '—'}</td>` : ''}
+          <td>${vatPctLabel(p.vat || 'Standard 20%')}</td>
           <td style="white-space:nowrap;">
             <button class="small ghost" data-editshipping="${p.id}">Edit</button>
             <button class="small danger" data-delshipping="${p.id}">Delete</button>
@@ -1140,6 +1231,21 @@ function renderCustomers(){
 // ---------- Modals ----------
 function closeModal(){ document.getElementById('modalRoot').innerHTML=''; }
 
+// Every pop-up gets a close (x) at its top right. It does whatever the
+// pop-up's own Cancel/Close button does (some return to another pop-up).
+new MutationObserver(()=>{
+  const modal = document.querySelector('#modalRoot .modal');
+  if(!modal || modal.querySelector(':scope > .modalClose')) return;
+  const bar = document.createElement('div');
+  bar.className = 'modalClose';
+  bar.innerHTML = '<button type="button" aria-label="Close" title="Close">×</button>';
+  bar.querySelector('button').onclick = ()=>{
+    const cancel = modal.querySelector('#cancelBtn');
+    if(cancel) cancel.click(); else closeModal();
+  };
+  modal.prepend(bar);
+}).observe(document.getElementById('modalRoot'), { childList:true, subtree:true });
+
 function openConfirmModal(message, onConfirm, opts){
   opts = opts || {};
   const title = opts.title || 'Delete this?';
@@ -1232,15 +1338,15 @@ function openPackagingModal(existing){
         <h3>${existing? 'Edit packaging':'Add packaging'}</h3>
         <div class="field"><label>Size</label><input id="f_size" value="${p.size}" placeholder="e.g. Medium (Shipped)"></div>
         <div class="grid2">
-          <div class="field"><label>Price (£)</label><input id="f_price" type="number" step="0.01" value="${p.price}"></div>
-          <div class="field"><label>Cost (£)</label><input id="f_cost" type="number" step="0.01" value="${p.cost}"></div>
+          <div class="field"><label>Price (£, inc VAT)</label><input id="f_price" type="number" step="0.01" value="${p.price}"></div>
+          ${canSeeCosts() ? `<div class="field"><label>Cost (£, inc VAT)</label><input id="f_cost" type="number" step="0.01" value="${p.cost ?? ''}"></div>` : ''}
         </div>
         <div class="grid2">
-          <div class="field"><label>Weight (kg)</label><input id="f_weight" type="number" step="0.001" value="${p.weight}"></div>
+          <div class="field"><label>Weight (kg)</label><input id="f_weight" type="number" step="0.001" value="${p.weight ?? ''}"></div>
           <div class="field">
             <label>VAT rate</label>
             <select id="f_vat">
-              ${['Standard 20%','Reduced 5%','Zero 0%','Exempt'].map(v=>`<option ${(p.vat||'Standard 20%')===v?'selected':''}>${v}</option>`).join('')}
+              ${vatOptionsHtml(p.vat)}
             </select>
           </div>
         </div>
@@ -1255,14 +1361,15 @@ function openPackagingModal(existing){
     const size = document.getElementById('f_size').value.trim();
     if(!size){ showToast('Give it a size name first'); return; }
     const weightRaw = document.getElementById('f_weight').value;
-    const costRaw = document.getElementById('f_cost').value;
     const item = {
       size,
       price: parseFloat(document.getElementById('f_price').value)||0,
       weight: weightRaw==='' ? null : parseFloat(weightRaw),
-      cost: costRaw==='' ? null : parseFloat(costRaw),
       vat: document.getElementById('f_vat').value,
     };
+    // Non-admins don't see the cost field; leaving it out keeps the stored cost.
+    const costEl = document.getElementById('f_cost');
+    if(costEl) item.cost = costEl.value==='' ? null : parseFloat(costEl.value);
     try{
       State.packaging = existing ? await api.packaging.update(p.id, item) : await api.packaging.create(item);
       closeModal(); render(); showToast('Packaging saved');
@@ -1271,18 +1378,21 @@ function openPackagingModal(existing){
 }
 
 function openShippingModal(existing){
-  const p = existing || { id:null, label:'', price:0, vat:'Standard 20%' };
+  const p = existing || { id:null, label:'', price:0, cost:'', vat:'Standard 20%' };
   document.getElementById('modalRoot').innerHTML = `
     <div class="modal-overlay" id="ovl">
       <div class="modal">
         <h3>${existing? 'Edit shipping':'Add shipping'}</h3>
         <div class="field"><label>Label</label><input id="f_label" value="${p.label}" placeholder="e.g. Medium (Shipped)"></div>
         <div class="grid2">
-          <div class="field"><label>Price (£)</label><input id="f_price" type="number" step="0.01" value="${p.price}"></div>
+          <div class="field"><label>Price (£, inc VAT)</label><input id="f_price" type="number" step="0.01" value="${p.price}"></div>
+          ${canSeeCosts() ? `<div class="field"><label>Cost (£, inc VAT)</label><input id="f_cost" type="number" step="0.01" value="${p.cost ?? ''}"></div>` : ''}
+        </div>
+        <div class="grid2">
           <div class="field">
             <label>VAT rate</label>
             <select id="f_vat">
-              ${['Standard 20%','Reduced 5%','Zero 0%','Exempt'].map(v=>`<option ${(p.vat||'Standard 20%')===v?'selected':''}>${v}</option>`).join('')}
+              ${vatOptionsHtml(p.vat)}
             </select>
           </div>
         </div>
@@ -1301,6 +1411,9 @@ function openShippingModal(existing){
       price: parseFloat(document.getElementById('f_price').value)||0,
       vat: document.getElementById('f_vat').value,
     };
+    // Non-admins don't see the cost field; leaving it out keeps the stored cost.
+    const costEl = document.getElementById('f_cost');
+    if(costEl) item.cost = costEl.value==='' ? null : parseFloat(costEl.value);
     try{
       State.shipping = existing ? await api.shipping.update(p.id, item) : await api.shipping.create(item);
       closeModal(); render(); showToast('Shipping saved');
@@ -1308,12 +1421,15 @@ function openShippingModal(existing){
   };
 }
 
-function openStockModal(existing){
-  const s = existing || { id:null, category:'', brand:'', itemName:'', v:false, vg:false, g:false, n:false, cost:0, price:0, weight:'', vat:'Standard 20%', availability:'In stock', qtyOnHand:0, qtyOnOrder:0 };
+function openStockModal(existing, copyFrom){
+  // A copy starts as a new item with the same details but no stock of its own.
+  if(copyFrom) existing = null;
+  const s = copyFrom ? Object.assign({}, copyFrom, { id:null, qtyOnHand:0, qtyOnOrder:0 }) : existing || { id:null, category:'', brand:'', itemName:'', v:false, vg:false, g:false, n:false, cost:0, price:0, weight:'', vat:'Standard 20%', availability:'In stock', qtyOnHand:0, qtyOnOrder:0 };
   document.getElementById('modalRoot').innerHTML = `
     <div class="modal-overlay" id="ovl">
       <div class="modal">
-        <h3>${existing? 'Edit item':'Add item'}</h3>
+        <h3>${existing? 'Edit item': copyFrom? 'Copy item' : 'Add item'}</h3>
+        ${copyFrom? `<div class="savehint" style="margin-bottom:10px;">Copied from "${itemSearchLabel(copyFrom)}". Change what's different, then save as a new item.</div>` : ''}
         <div class="grid2">
           <div class="field"><label>Category</label>
             <select id="f_category">
@@ -1335,14 +1451,14 @@ function openStockModal(existing){
           </div>
         </div>
         <div class="grid2">
-          <div class="field"><label>Cost (£)</label><input id="f_cost" type="number" step="0.01" value="${(s.cost||0).toFixed(2)}"></div>
-          <div class="field"><label>Price (£)</label><input id="f_price" type="number" step="0.01" value="${(s.price||0).toFixed(2)}"></div>
+          ${canSeeCosts() ? `<div class="field"><label>Cost (£, inc VAT)</label><input id="f_cost" type="number" step="0.01" value="${(s.cost||0).toFixed(2)}"></div>` : ''}
+          <div class="field"><label>Price (£, inc VAT)</label><input id="f_price" type="number" step="0.01" value="${(s.price||0).toFixed(2)}"></div>
         </div>
         <div class="grid2">
           <div class="field"><label>Weight (g)</label><input id="f_weight" type="number" step="1" value="${s.weight!=null?s.weight:''}" placeholder="e.g. 227"></div>
           <div class="field"><label>VAT</label>
             <select id="f_vat">
-              ${['Standard 20%','Reduced 5%','Zero 0%','Exempt'].map(v=>`<option ${s.vat===v?'selected':''}>${v}</option>`).join('')}
+              ${vatOptionsHtml(s.vat)}
             </select>
           </div>
         </div>
@@ -1373,7 +1489,6 @@ function openStockModal(existing){
       vg: document.getElementById('f_vg').checked,
       g: document.getElementById('f_g').checked,
       n: document.getElementById('f_n').checked,
-      cost: Math.round((parseFloat(document.getElementById('f_cost').value)||0)*100)/100,
       price: Math.round((parseFloat(document.getElementById('f_price').value)||0)*100)/100,
       weight: document.getElementById('f_weight').value==='' ? null : parseFloat(document.getElementById('f_weight').value),
       vat: document.getElementById('f_vat').value,
@@ -1381,6 +1496,9 @@ function openStockModal(existing){
       qtyOnHand: parseFloat(document.getElementById('f_qty').value)||0,
       qtyOnOrder: parseFloat(document.getElementById('f_qtyorder').value)||0,
     };
+    // Non-admins don't see the cost field; leaving it out keeps the stored cost.
+    const costEl = document.getElementById('f_cost');
+    if(costEl) item.cost = Math.round((parseFloat(costEl.value)||0)*100)/100;
     try{
       State.stock = existing ? await api.stock.update(s.id, item) : await api.stock.create(item);
       closeModal(); render(); showToast('Item saved');
@@ -1391,15 +1509,11 @@ function openStockModal(existing){
 function openProductModal(existing, duplicateFrom){
   const p = existing ? JSON.parse(JSON.stringify(existing))
     : duplicateFrom ? Object.assign(JSON.parse(JSON.stringify(duplicateFrom)), { id:null, name:'' })
-    : { id:null, name:'', components:[], packagingId:null, shippingId:null, photoUrl:'' };
+    : { id:null, name:'', components:[], packagingId:null, shippingId:null, photoUrl:'', photoUrls:[], priceOverrides:{} };
+  if(!Array.isArray(p.photoUrls)) p.photoUrls = p.photoUrl ? [p.photoUrl] : [];
+  if(!p.priceOverrides) p.priceOverrides = {};
   const duplicateOfName = duplicateFrom ? duplicateFrom.name : null;
-  let pendingPhotoFile = null; // uploaded to /api/uploads only once Save is clicked
-
-  function itemsDatalist(){
-    return `<datalist id="stockItemsDatalist">
-      ${State.stock.map(s=>`<option value="${itemSearchLabel(s).replace(/"/g,'&quot;')}">`).join('')}
-    </datalist>`;
-  }
+  const pendingPhotos = []; // { file, preview } — uploaded to /api/uploads only once Save is clicked
 
   function renderComps(){
     return `
@@ -1412,7 +1526,7 @@ function openProductModal(existing, duplicateFrom){
       const priceVal = c.price!=null ? c.price : (s? s.price : 0);
       return `
     <div class="comprow">
-      <input type="text" list="stockItemsDatalist" class="compNameInput" data-cidx="${i}" value="${val}" placeholder="Search item name or brand...">
+      <input type="text" class="compNameInput" data-cidx="${i}" value="${val}" placeholder="Search item name or brand...">
       <input type="number" step="1" min="0" class="compQty" data-cidx="${i}" value="${c.qty}">
       <input type="number" step="0.01" min="0" class="compPrice" data-cidx="${i}" value="${priceVal}">
       <button class="small danger" data-removecomp="${i}">×</button>
@@ -1420,9 +1534,22 @@ function openProductModal(existing, duplicateFrom){
     }).join('')}`;
   }
 
+  function photosHtml(){
+    const thumbs = p.photoUrls.map((url,i)=>`<div class="photoThumb"><img src="${url}"><button class="small danger" data-removephoto="${i}" title="Remove photo">×</button></div>`)
+      .concat(pendingPhotos.map((ph,i)=>`<div class="photoThumb"><img src="${ph.preview}"><button class="small danger" data-removependingphoto="${i}" title="Remove photo">×</button></div>`));
+    return `<div class="photoGrid">${thumbs.join('') || '<div class="savehint" style="margin:0;">No photos yet.</div>'}</div>
+      ${thumbs.length>1 ? `<div class="savehint" style="margin-top:4px;">The first photo is the main one, used in lists and proposals.</div>` : ''}`;
+  }
+
+  function overrideInput(v){
+    const val = p.priceOverrides[v.rate];
+    return `<input type="text" inputmode="decimal" class="priceOverride" data-rate="${v.rate}" value="${val!=null ? val : ''}" placeholder="${(Math.round(v.calculated*100)/100).toFixed(2)}">`;
+  }
+
   function totalsHtml(){
     const totals = computeHamperTotals(p);
-    const hideCosts = State.hideHamperCosts;
+    const hideCosts = State.hideHamperCosts || !canSeeCosts();
+    const anyOverride = totals.vatBreakdown.some(v=>v.overridden);
     return `
       <div class="panel" style="margin-top:14px;background:var(--paper);padding:14px 16px;">
         <div class="grid2">
@@ -1430,20 +1557,46 @@ function openProductModal(existing, duplicateFrom){
           <div><div class="ometa">Total weight</div><div style="font-weight:500;font-size:15px;">${totals.weight.toFixed(0)} g</div></div>
         </div>
         <div class="grid2" style="margin-top:10px;">
-          <div><div class="ometa">Total price (inc VAT)</div><div style="font-weight:600;font-size:19px;">${fmtMoney(totals.totalIncVat)}</div></div>
+          <div><div class="ometa">Total price (inc VAT)${anyOverride ? ' — overridden' : ''}</div><div style="font-weight:600;font-size:19px;">${fmtMoney(totals.totalIncVat)}</div></div>
           ${hideCosts ? '' : `<div><div class="ometa">Profit (ex VAT)</div><div style="font-weight:600;font-size:19px;">${profitToggleHtml(totals.profit,'font-weight:600;font-size:19px;')}</div></div>`}
         </div>
-        ${totals.vatBreakdown.length? `<table style="margin-top:10px;"><thead><tr><th>VAT rate</th><th>Ex VAT</th><th>VAT</th><th>Inc VAT</th></tr></thead><tbody>
-          ${totals.vatBreakdown.map(v=>`<tr><td>${v.rate}</td><td>${fmtMoney(v.subtotal)}</td><td>${fmtMoney(v.vatAmount)}</td><td>${fmtMoney(v.totalIncVat)}</td></tr>`).join('')}
-        </tbody></table>` : `<div class="savehint">Add items to see a price breakdown.</div>`}
+        ${totals.vatBreakdown.length? `<table class="overrideTable" style="margin-top:10px;"><thead><tr><th>VAT rate</th><th>Ex VAT</th><th>VAT</th><th>Inc VAT</th><th>Override inc VAT (£)</th></tr></thead><tbody>
+          ${totals.vatBreakdown.map(v=>`<tr>
+            <td>${breakdownLabel(v)}</td><td>${fmtMoney(v.subtotal)}</td><td>${fmtMoney(v.vatAmount)}</td><td>${fmtMoney(v.totalIncVat)}</td>
+            <td>${v.isShipping ? '<span class="savehint">From the Shipping page</span>' : overrideInput(v)}</td>
+          </tr>`).join('')}
+        </tbody></table>
+        <div class="savehint">Leave an override blank to use the price worked out from the items and packaging.</div>` : `<div class="savehint">Add items to see a price breakdown.</div>`}
       </div>
     `;
   }
 
+  function wireOverrides(){
+    document.querySelectorAll('.priceOverride').forEach(inp=>{
+      inp.oninput = ()=>{
+        const raw = inp.value.replace(/[£,\s]/g,'');
+        if(raw===''){ delete p.priceOverrides[inp.dataset.rate]; }
+        else if(Number.isFinite(Number(raw)) && Number(raw)>=0){ p.priceOverrides[inp.dataset.rate] = Number(raw); }
+        refreshTotals();
+      };
+    });
+  }
+
   function refreshTotals(){
     const el = document.getElementById('hamperTotals');
-    if(el) el.innerHTML = totalsHtml();
+    if(!el) return;
+    // Re-rendering replaces the override boxes, so put the cursor back.
+    const focused = document.activeElement && document.activeElement.classList.contains('priceOverride') ? document.activeElement : null;
+    const focusRate = focused ? focused.dataset.rate : null;
+    const caret = focused ? focused.selectionStart : null;
+    const typed = focused ? focused.value : null;
+    el.innerHTML = totalsHtml();
     wireProfitToggles(el);
+    wireOverrides();
+    if(focusRate!=null){
+      const again = [...el.querySelectorAll('.priceOverride')].find(x=>x.dataset.rate===focusRate);
+      if(again){ again.value = typed; again.focus(); try{ again.setSelectionRange(caret, caret); }catch(e){ /* ignore */ } }
+    }
   }
 
   function paint(focusCompIdx){
@@ -1456,7 +1609,7 @@ function openProductModal(existing, duplicateFrom){
         <div class="modal wide">
           <h3>${existing? 'Edit hamper': duplicateFrom? 'Copy hamper' : 'Add hamper'}</h3>
           ${duplicateFrom? `<div class="savehint" style="margin-bottom:10px;">Copied from "${duplicateOfName}" — give this hamper its own name before saving.</div>` : ''}
-          <div class="field"><label>Hamper name</label><input id="f_name" value="${p.name}" placeholder="e.g. The Bishop's Stortford"></div>
+          <div class="field"><label>Hamper name</label><input id="f_name" value="${p.name.replace(/"/g,'&quot;')}" placeholder="e.g. The Bishop's Stortford"></div>
           <div class="field">
             <label>Packaging</label>
             <select id="f_packaging">
@@ -1472,15 +1625,12 @@ function openProductModal(existing, duplicateFrom){
             </select>
           </div>
           <div class="field">
-            <label>Photo</label>
-            <div class="logoPreviewRow">
-              ${p.photoUrl? `<img src="${p.photoUrl}" class="logoThumb" id="photoPreview">` : `<div class="logoThumb" id="photoPreview" style="background:var(--kraft);"></div>`}
-              <input id="f_photo" type="file" accept="image/*" style="flex:1;">
-            </div>
+            <label>Photos</label>
+            <div id="photoList">${photosHtml()}</div>
+            <input id="f_photo" type="file" accept="image/*" multiple style="margin-top:8px;">
           </div>
           <label>Items</label>
           <div id="compList">${renderComps()}</div>
-          ${itemsDatalist()}
           ${State.stock.length? `<button class="linkbtn" id="addCompBtn">+ Add item</button>` : `<div class="savehint">Add items first, then come back to build this recipe.</div>`}
           <div id="hamperTotals">${totalsHtml()}</div>
           <div class="row-between" style="margin-top:18px;">
@@ -1496,19 +1646,28 @@ function openProductModal(existing, duplicateFrom){
     }
     document.getElementById('cancelBtn').onclick = closeModal;
     wireProfitToggles(document.getElementById('hamperTotals'));
+    wireOverrides();
     document.getElementById('f_name').oninput = (e)=>{ p.name = e.target.value; };
     document.getElementById('f_packaging').onchange = (e)=>{ p.packagingId = e.target.value || null; refreshTotals(); };
     document.getElementById('f_shipping').onchange = (e)=>{ p.shippingId = e.target.value || null; refreshTotals(); };
+    const wirePhotos = ()=>{
+      document.querySelectorAll('[data-removephoto]').forEach(b=>{
+        b.onclick = ()=>{ p.photoUrls.splice(parseInt(b.dataset.removephoto),1); document.getElementById('photoList').innerHTML = photosHtml(); wirePhotos(); };
+      });
+      document.querySelectorAll('[data-removependingphoto]').forEach(b=>{
+        b.onclick = ()=>{ pendingPhotos.splice(parseInt(b.dataset.removependingphoto),1); document.getElementById('photoList').innerHTML = photosHtml(); wirePhotos(); };
+      });
+    };
+    wirePhotos();
     document.getElementById('f_photo').addEventListener('change', (e)=>{
-      const file = e.target.files[0];
-      if(!file) return;
-      pendingPhotoFile = file;
-      const reader = new FileReader();
-      reader.onload = ()=>{
-        const prev = document.getElementById('photoPreview');
-        prev.outerHTML = `<img src="${reader.result}" class="logoThumb" id="photoPreview">`;
-      };
-      reader.readAsDataURL(file);
+      [...e.target.files].forEach(file=>{
+        const entry = { file, preview:'' };
+        pendingPhotos.push(entry);
+        const reader = new FileReader();
+        reader.onload = ()=>{ entry.preview = reader.result; document.getElementById('photoList').innerHTML = photosHtml(); wirePhotos(); };
+        reader.readAsDataURL(file);
+      });
+      e.target.value = '';
     });
     if(document.getElementById('addCompBtn')){
       document.getElementById('addCompBtn').onclick = ()=>{
@@ -1519,15 +1678,24 @@ function openProductModal(existing, duplicateFrom){
     document.querySelectorAll('[data-removecomp]').forEach(b=>{
       b.onclick = ()=>{ p.components.splice(parseInt(b.dataset.removecomp),1); paint(); };
     });
+    const itemOptions = ()=> State.stock.map(s=>({ id: s.id, label: itemSearchLabel(s), text: s.category||'' }));
     document.querySelectorAll('.compNameInput').forEach(inp=>{
-      inp.addEventListener('change', ()=>{
-        const idx = parseInt(inp.dataset.cidx);
-        const typed = inp.value.trim().toLowerCase();
-        const match = State.stock.find(s => itemSearchLabel(s).toLowerCase() === typed)
-          || State.stock.find(s => itemName(s).toLowerCase() === typed);
-        p.components[idx].componentId = match ? match.id : null;
-        p.components[idx].price = match ? match.price : 0;
-        paint();
+      const idx = parseInt(inp.dataset.cidx);
+      attachSearchBox(inp, {
+        options: itemOptions,
+        onPick: (id)=>{
+          if(p.components[idx].componentId===id) return;
+          const s = stockById(id);
+          p.components[idx].componentId = id;
+          p.components[idx].price = s ? s.price : 0;
+          paint();
+        },
+        onNoMatch: ()=>{
+          if(!p.components[idx].componentId && !inp.value.trim()) return;
+          p.components[idx].componentId = null;
+          p.components[idx].price = 0;
+          paint();
+        },
       });
     });
     document.querySelectorAll('.compQty').forEach(inp=>{
@@ -1542,11 +1710,16 @@ function openProductModal(existing, duplicateFrom){
       if(duplicateFrom && name.toLowerCase() === (duplicateOfName||'').toLowerCase()){ showToast('Give the copy a new name before saving'); return; }
       if(p.components.some(c=>!c.componentId)){ showToast('Match every item to something in your Items list'); return; }
       p.name = name;
+      // Only keep overrides for VAT rates this hamper's goods still use.
+      const liveRates = new Set(computeHamperTotals(Object.assign({}, p, { priceOverrides:{} })).vatBreakdown.filter(v=>!v.isShipping).map(v=>v.rate));
+      Object.keys(p.priceOverrides).forEach(r=>{ if(!liveRates.has(r)) delete p.priceOverrides[r]; });
       try{
-        if(pendingPhotoFile){
-          const uploaded = await api.uploads.image(pendingPhotoFile);
-          p.photoUrl = uploaded.url;
+        for(const ph of pendingPhotos){
+          const uploaded = await api.uploads.image(ph.file);
+          p.photoUrls.push(uploaded.url);
         }
+        pendingPhotos.length = 0;
+        p.photoUrl = p.photoUrls[0] || '';
         State.products = existing ? await api.products.update(p.id, p) : await api.products.create(p);
         closeModal(); render(); showToast(duplicateFrom? 'Hamper copied' : 'Hamper saved');
       }catch(e){ showToast(e.message || 'Could not save hamper'); }
@@ -1640,7 +1813,7 @@ function openCustomerModal(existing, opts){
       <div class="modal-overlay" id="ovl">
         <div class="modal">
           <h3>${existing? 'Edit customer':'Add customer'}</h3>
-          <div class="field"><label>Company name</label><input id="f_company" value="${c.companyName}" placeholder="e.g. Bishop's Stortford Law LLP"></div>
+          <div class="field"><label>Company name</label><input id="f_company" value="${c.companyName}"></div>
           <div class="field">
             <label>Source</label>
             <select id="f_source">
@@ -1648,21 +1821,21 @@ function openCustomerModal(existing, opts){
               ${State.sources.map(s=>`<option value="${s.id}" ${s.id===c.sourceId?'selected':''}>${s.label}</option>`).join('')}
             </select>
           </div>
-          <div class="field"><label>Main contact name</label><input id="f_contact" value="${c.contactName}" placeholder="e.g. Priya Shah"></div>
+          <div class="field"><label>Main contact name</label><input id="f_contact" value="${c.contactName}"></div>
           <div class="grid3">
-            <div class="field"><label>Email address</label><input id="f_email" type="email" value="${c.email||''}" placeholder="e.g. priya@company.com"></div>
-            <div class="field"><label>Primary phone</label><input id="f_phone" value="${c.phonePrimary||''}" placeholder="e.g. 01279 123456"></div>
-            <div class="field"><label>Secondary phone</label><input id="f_phone_secondary" value="${c.phoneSecondary||''}" placeholder="e.g. 07700 123456"></div>
+            <div class="field"><label>Email address</label><input id="f_email" type="email" value="${c.email||''}"></div>
+            <div class="field"><label>Primary phone</label><input id="f_phone" value="${c.phonePrimary||''}"></div>
+            <div class="field"><label>Secondary phone</label><input id="f_phone_secondary" value="${c.phoneSecondary||''}"></div>
           </div>
-          <div class="field"><label>2nd contact name</label><input id="f_contact2" value="${c.contactName2||''}" placeholder="e.g. Sam Okafor"></div>
+          <div class="field"><label>2nd contact name</label><input id="f_contact2" value="${c.contactName2||''}"></div>
           <div class="grid3">
-            <div class="field"><label>2nd email address</label><input id="f_email2" type="email" value="${c.email2||''}" placeholder="e.g. sam@company.com"></div>
-            <div class="field"><label>2nd primary phone</label><input id="f_phone2" value="${c.phone2Primary||''}" placeholder="e.g. 01279 654321"></div>
-            <div class="field"><label>2nd secondary phone</label><input id="f_phone2_secondary" value="${c.phone2Secondary||''}" placeholder="e.g. 07700 654321"></div>
+            <div class="field"><label>2nd email address</label><input id="f_email2" type="email" value="${c.email2||''}"></div>
+            <div class="field"><label>2nd primary phone</label><input id="f_phone2" value="${c.phone2Primary||''}"></div>
+            <div class="field"><label>2nd secondary phone</label><input id="f_phone2_secondary" value="${c.phone2Secondary||''}"></div>
           </div>
           <div class="grid2">
-            <div class="field"><label>Ribbon colour</label><input id="f_ribbon" value="${c.ribbonColor||''}" placeholder="e.g. Forest green or #3F6B3F"></div>
-            <div class="field"><label>Font colour</label><input id="f_font" value="${c.fontColor||''}" placeholder="e.g. Cream or #F4DFE5"></div>
+            <div class="field"><label>Ribbon colour</label><input id="f_ribbon" value="${c.ribbonColor||''}"></div>
+            <div class="field"><label>Font colour</label><input id="f_font" value="${c.fontColor||''}"></div>
           </div>
           <div class="field">
             <label>Logo</label>
@@ -1737,10 +1910,7 @@ function openProposalModal(existing){
           <div class="field">
             <label>Customer</label>
             ${State.customers.length? `
-              <input type="text" id="f_customer" list="customersDatalist" value="${selectedCust? customerLabel(selectedCust).replace(/"/g,'&quot;') : ''}" placeholder="Search customers...">
-              <datalist id="customersDatalist">
-                ${State.customers.map(c=>`<option value="${customerLabel(c).replace(/"/g,'&quot;')}">`).join('')}
-              </datalist>` : `<div class="savehint">No customers yet — add one below.</div>`}
+              <input type="text" id="f_customer" value="${selectedCust? customerLabel(selectedCust).replace(/"/g,'&quot;') : ''}" placeholder="Search company or contact name...">` : `<div class="savehint">No customers yet — add one below.</div>`}
             <button class="linkbtn" id="addCustomerBtn" style="margin-top:4px;">+ Add new customer</button>
           </div>
           <div class="field"><label>Proposal date</label><input id="f_propdate" type="date" value="${pr.proposalDate||''}"></div>
@@ -1773,11 +1943,10 @@ function openProposalModal(existing){
       });
     };
     if(document.getElementById('f_customer')){
-      document.getElementById('f_customer').addEventListener('change', (e)=>{
-        const typed = e.target.value.trim();
-        const match = State.customers.find(c => customerLabel(c).toLowerCase() === typed.toLowerCase());
-        pr.customerId = match ? match.id : null;
-        paint();
+      attachSearchBox(document.getElementById('f_customer'), {
+        options: customerSearchOptions,
+        onPick: (id)=>{ if(pr.customerId!==id){ pr.customerId = id; paint(); } },
+        onNoMatch: ()=>{ if(pr.customerId){ pr.customerId = null; paint(); } },
       });
     }
     document.getElementById('f_propdate').oninput = (e)=>{ pr.proposalDate = e.target.value; };
@@ -1854,19 +2023,19 @@ function openOrderModal(existing){
     // the order's totals per VAT rate.
     const lineRows = totals.lines.map(line=>line.vatBreakdown.map((v,vi)=>`<tr${vi===0?' class="groupStart"':''}>
         ${vi===0 ? `<td rowspan="${line.vatBreakdown.length}">${line.qty} × ${line.product.name}</td>` : ''}
-        <td>${v.rate}</td><td>${fmtMoney(v.subtotal)}</td><td>${fmtMoney(v.vatAmount)}</td><td>${fmtMoney(v.totalIncVat)}</td>
+        <td>${breakdownLabel(v)}</td><td>${fmtMoney(v.subtotal)}</td><td>${fmtMoney(v.vatAmount)}</td><td>${fmtMoney(v.totalIncVat)}</td>
       </tr>`).join('')).join('');
     const totalRows = totals.vatBreakdown.map((v,vi)=>`<tr class="totalRow${vi===0?' groupStart':''}">
         ${vi===0 ? `<td rowspan="${totals.vatBreakdown.length}">Order total</td>` : ''}
-        <td>${v.rate}</td><td>${fmtMoney(v.subtotal)}</td><td>${fmtMoney(v.vatAmount)}</td><td>${fmtMoney(v.totalIncVat)}</td>
+        <td>${breakdownLabel(v)}</td><td>${fmtMoney(v.subtotal)}</td><td>${fmtMoney(v.vatAmount)}</td><td>${fmtMoney(v.totalIncVat)}</td>
       </tr>`).join('');
     return `
       <div class="panel" style="margin-top:14px;background:var(--paper);padding:14px 16px;">
         <div class="grid2">
-          <div><div class="ometa">Total cost (inc VAT)</div><div style="font-weight:500;font-size:15px;">${fmtMoney(totals.cost)}</div></div>
+          ${canSeeCosts() ? `<div><div class="ometa">Total cost (inc VAT)</div><div style="font-weight:500;font-size:15px;">${fmtMoney(totals.cost)}</div></div>` : ''}
           <div><div class="ometa">Total price (inc VAT)</div><div style="font-weight:600;font-size:15px;">${fmtMoney(totals.totalIncVat)}</div></div>
         </div>
-        <div style="margin-top:10px;"><div class="ometa">Profit (ex VAT)</div><div style="font-weight:600;font-size:19px;">${profitToggleHtml(totals.profit,'font-weight:600;font-size:19px;')}</div></div>
+        ${canSeeCosts() ? `<div style="margin-top:10px;"><div class="ometa">Profit (ex VAT)</div><div style="font-weight:600;font-size:19px;">${profitToggleHtml(totals.profit,'font-weight:600;font-size:19px;')}</div></div>` : ''}
         ${totals.vatBreakdown.length? hscroll(`<table class="priceSummary" style="margin-top:10px;"><thead><tr><th>Hamper</th><th>VAT rate</th><th>Ex VAT</th><th>VAT</th><th>Inc VAT</th></tr></thead><tbody>
           ${lineRows}${totalRows}
         </tbody></table>`) : `<div class="savehint">Add hampers to see a price breakdown.</div>`}
@@ -1883,11 +2052,8 @@ function openOrderModal(existing){
 
   function customerDetailsHtml(cust){
     if(!cust) return '';
-    const swatch = (label, colour)=> `<div><div class="ometa">${label}</div>
-      <div style="display:flex;align-items:center;gap:6px;margin-top:2px;">
-        ${colour ? `<span class="colourSwatch" style="background:${colour.replace(/"/g,'&quot;')};"></span>` : ''}${colour || '—'}
-      </div></div>`;
-    return `<div class="grid2" style="margin-bottom:12px;">${swatch('Ribbon colour', cust.ribbonColor)}${swatch('Font colour', cust.fontColor)}</div>`;
+    const colour = (label, value)=> `<div><div class="ometa">${label}</div><div style="margin-top:2px;">${value || '—'}</div></div>`;
+    return `<div class="grid2" style="margin-bottom:12px;">${colour('Ribbon colour', cust.ribbonColor)}${colour('Font colour', cust.fontColor)}</div>`;
   }
 
   function paint(){
@@ -1901,10 +2067,7 @@ function openOrderModal(existing){
           <div class="field">
             <label>Customer</label>
             ${State.customers.length? `
-              <input type="text" id="f_customer" list="customersDatalist" value="${selectedCust? customerLabel(selectedCust).replace(/"/g,'&quot;') : ''}" placeholder="Search customers...">
-              <datalist id="customersDatalist">
-                ${State.customers.map(c=>`<option value="${customerLabel(c).replace(/"/g,'&quot;')}">`).join('')}
-              </datalist>` : `<div class="savehint">No customers yet — add one below.</div>`}
+              <input type="text" id="f_customer" value="${selectedCust? customerLabel(selectedCust).replace(/"/g,'&quot;') : ''}" placeholder="Search company or contact name...">` : `<div class="savehint">No customers yet — add one below.</div>`}
             <button class="linkbtn" id="addCustomerBtn" style="margin-top:4px;">+ Add new customer</button>
             ${selectedCust ? `<button class="linkbtn" id="editCustomerBtn" style="margin:4px 0 0 12px;">Edit customer</button>` : ''}
           </div>
@@ -1955,11 +2118,10 @@ function openOrderModal(existing){
       });
     };
     if(document.getElementById('f_customer')){
-      document.getElementById('f_customer').addEventListener('change', (e)=>{
-        const typed = e.target.value.trim();
-        const match = State.customers.find(c => customerLabel(c).toLowerCase() === typed.toLowerCase());
-        o.customerId = match ? match.id : null;
-        paint();
+      attachSearchBox(document.getElementById('f_customer'), {
+        options: customerSearchOptions,
+        onPick: (id)=>{ if(o.customerId!==id){ o.customerId = id; paint(); } },
+        onNoMatch: ()=>{ if(o.customerId){ o.customerId = null; paint(); } },
       });
     }
     if(document.getElementById('addItemBtn')){
@@ -2059,6 +2221,9 @@ function attachHandlers(){
       if(window.getSelection && String(window.getSelection()).length) return;
       openRowEditor(row.dataset.rowkind, row.dataset.rowid);
     };
+  });
+  document.querySelectorAll('[data-gotab]').forEach(el=>{
+    el.onclick = ()=>{ setTab(el.dataset.gotab); window.scrollTo(0,0); };
   });
   const hideHamperCosts = document.getElementById('hideHamperCosts');
   if(hideHamperCosts){
@@ -2353,6 +2518,9 @@ function attachHandlers(){
   });
   document.querySelectorAll('[data-editstock]').forEach(b=>{
     b.onclick = ()=> openStockModal(State.stock.find(s=>s.id===b.dataset.editstock));
+  });
+  document.querySelectorAll('[data-copystock]').forEach(b=>{
+    b.onclick = ()=> openStockModal(null, State.stock.find(s=>s.id===b.dataset.copystock));
   });
   document.querySelectorAll('[data-delstock]').forEach(b=>{
     b.onclick = ()=>{

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { UPLOADS_ROOT } from './lib/storage.js';
 import { sessionMiddleware, requireAuth } from './lib/session.js';
+import { loadStaff, requireAdmin, hideCostsFromNonAdmins } from './lib/access.js';
 
 import authRouter from './routes/auth.js';
 import staffRouter from './routes/staff.js';
@@ -36,18 +37,21 @@ export function createApp() {
   app.use('/uploads', requireAuth, express.static(UPLOADS_ROOT));
   app.use('/assets', requireAuth, express.static(assetsDir));
 
-  app.use('/api/staff', requireAuth, staffRouter);
-  app.use('/api/bootstrap', requireAuth, bootstrapRouter);
-  app.use('/api/stock', requireAuth, stockRouter);
-  app.use('/api/packaging', requireAuth, packagingRouter);
-  app.use('/api/shipping', requireAuth, shippingRouter);
-  app.use('/api/sources', requireAuth, sourcesRouter);
-  app.use('/api/customers', requireAuth, customersRouter);
-  app.use('/api/products', requireAuth, productsRouter);
-  app.use('/api/orders', requireAuth, ordersRouter);
-  app.use('/api/proposals', requireAuth, proposalsRouter);
-  app.use('/api/uploads', requireAuth, uploadsRouter);
-  app.use('/api/reports', requireAuth, reportsRouter);
+  const staffOnly = [requireAuth, loadStaff, hideCostsFromNonAdmins];
+  // Anyone logged in can see the staff list (it's shown on the Staff page),
+  // but only admins can add, change or remove accounts.
+  app.use('/api/staff', ...staffOnly, (req, res, next) => (req.method === 'GET' ? next() : requireAdmin(req, res, next)), staffRouter);
+  app.use('/api/bootstrap', ...staffOnly, bootstrapRouter);
+  app.use('/api/stock', ...staffOnly, stockRouter);
+  app.use('/api/packaging', ...staffOnly, packagingRouter);
+  app.use('/api/shipping', ...staffOnly, shippingRouter);
+  app.use('/api/sources', ...staffOnly, sourcesRouter);
+  app.use('/api/customers', ...staffOnly, customersRouter);
+  app.use('/api/products', ...staffOnly, productsRouter);
+  app.use('/api/orders', ...staffOnly, ordersRouter);
+  app.use('/api/proposals', ...staffOnly, proposalsRouter);
+  app.use('/api/uploads', ...staffOnly, uploadsRouter);
+  app.use('/api/reports', ...staffOnly, reportsRouter);
 
   app.use(express.static(publicDir));
 

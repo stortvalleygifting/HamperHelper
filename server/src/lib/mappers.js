@@ -49,6 +49,7 @@ export function shippingToApi(row) {
     id: row.id,
     label: row.label,
     price: row.price ?? 0,
+    cost: row.cost,
     vat: row.vat || 'Standard 20%',
   };
 }
@@ -84,6 +85,8 @@ export function productToApi(row, components) {
     packagingId: row.packaging_id,
     shippingId: row.shipping_id,
     photoUrl: row.photo_url || '',
+    photoUrls: Array.isArray(row.photo_urls) && row.photo_urls.length ? row.photo_urls : row.photo_url ? [row.photo_url] : [],
+    priceOverrides: row.price_overrides || {},
     components: components.map((c) => ({
       componentId: c.component_id,
       qty: c.qty,

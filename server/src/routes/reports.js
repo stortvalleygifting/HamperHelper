@@ -68,11 +68,13 @@ router.post('/ready-to-invoice', async (req, res) => {
         const product = it.product_id ? productById.get(it.product_id) : null;
         if (!product) continue;
         const totals = computeHamperTotals(product, stockById, packagingById, shippingById);
-        const splitByRate = totals.vatBreakdown.length > 1;
+        const splitByRate = totals.vatBreakdown.filter((v) => !v.isShipping).length > 1;
         for (const v of totals.vatBreakdown) {
           const vatLabel = INVOICE_VAT_LABELS[v.rate] || v.rate;
           const vatPct = Math.round(vatRatePercent(v.rate) * 100);
-          const itemName = splitByRate ? `${product.name} - ${vatPct === 0 ? 'no VAT' : 'VAT ' + vatPct + '%'}` : product.name;
+          const itemName = v.isShipping
+            ? `${product.name} - shipping`
+            : splitByRate ? `${product.name} - ${vatPct === 0 ? 'no VAT' : 'VAT ' + vatPct + '%'}` : product.name;
           rows.push({
             'Invoice Date': todayStr,
             'Invoice Number': invoiceNumber,

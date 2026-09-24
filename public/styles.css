@@ -153,3 +153,19 @@
   .priceSummary tr.groupStart td{border-top:0.5px solid var(--kraft-line);}
   .priceSummary td[rowspan]{font-weight:500;}
   .priceSummary tr.totalRow td{font-weight:600;}
+  .stat.clickable{cursor:pointer;}
+  .stat.clickable:hover{border-color:var(--ink-soft);}
+  /* Close (x) pinned to the top right of every pop-up, even when scrolled. */
+  .modal{position:relative;}
+  .modalClose{position:sticky;top:-22px;height:0;display:flex;justify-content:flex-end;z-index:6;margin:-12px -12px 0 0;}
+  .modalClose button{width:30px;height:30px;padding:0;border-radius:50%;font-size:18px;line-height:1;background:var(--card);border-color:var(--border);box-shadow:0 1px 3px rgba(0,0,0,0.08);}
+  .searchList{position:fixed;z-index:80;background:var(--card);border:0.5px solid var(--kraft-line);border-radius:7px;box-shadow:0 6px 18px rgba(0,0,0,0.12);max-height:240px;overflow-y:auto;font-size:13.5px;}
+  .searchOpt{padding:7px 10px;cursor:pointer;}
+  .searchOpt.active,.searchOpt:hover{background:var(--paper);}
+  .searchEmpty{padding:7px 10px;color:var(--text-muted);}
+  .photoGrid{display:flex;flex-wrap:wrap;gap:8px;}
+  .photoThumb{position:relative;width:72px;height:72px;}
+  .photoThumb img{width:72px;height:72px;object-fit:cover;border-radius:7px;border:0.5px solid var(--border);display:block;}
+  .photoThumb button{position:absolute;top:-6px;right:-6px;padding:1px 6px;border-radius:50%;}
+  .overrideTable input{width:100px;padding:5px 8px;}
+  .overrideTable input::placeholder{color:var(--text-muted);font-style:italic;}

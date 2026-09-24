@@ -62,11 +62,18 @@ order, tracked in a `schema_migrations` table so it's safe to re-run.
 same default packaging/shipping options the original artifact used to create
 on first run.
 
-One deliberate schema-driven behavior change: `shipping_options` (per the
-given schema) only has `label`, `price`, and `vat` — no `weight`/`cost` like
-`packaging_options` has. Shipping is treated as a pass-through customer
-charge rather than a tracked cost, so a hamper's total *cost* doesn't include
-its shipping option (its *price* still does).
+Pricing rules: every price and cost is entered **including VAT**; ex-VAT
+figures are backed out of them (never added on top), and profit is ex-VAT
+price minus ex-VAT cost. A hamper's price is one line per VAT rate for its
+goods (items + packaging), each of which can be overridden in the hamper
+editor (`products.price_overrides`), plus one separate line for shipping at
+the shipping option's own VAT rate. Shipping options have a cost like
+packaging options do (migration `004`). The frontend (`public/app.js`) and
+the invoice export (`server/src/lib/pricing.js`) share these rules.
+
+Cost and profit figures are admin-only: `server/src/lib/access.js` strips
+every `cost` field from API responses for non-admin staff and ignores any
+they send, and only admins can add, change or remove staff accounts.
 
 ## Staff login
 
