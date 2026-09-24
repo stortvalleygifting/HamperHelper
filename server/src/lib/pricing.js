@@ -24,9 +24,13 @@ function breakdownLine(rate, totalIncVat, extra) {
   return { rate, subtotal, vatAmount: totalIncVat - subtotal, totalIncVat, isShipping: false, ...extra };
 }
 
+// priceOverrides key for the shipping line (the others are VAT rate labels).
+export const SHIPPING_OVERRIDE_KEY = '__shipping';
+
 // A hamper's price is one line per VAT rate for its goods (items + packaging),
 // where the hamper's priceOverrides can replace a rate's calculated amount,
-// plus a single separate line for shipping at the shipping option's own rate.
+// plus a single separate line for shipping at the shipping option's own rate,
+// which can also be overridden.
 // stockById/packagingById/shippingById are Maps keyed by id.
 export function computeHamperTotals(product, stockById, packagingById, shippingById) {
   let cost = 0;
@@ -61,7 +65,9 @@ export function computeHamperTotals(product, stockById, packagingById, shippingB
     const rate = ship.vat || 'Standard 20%';
     cost += ship.cost || 0;
     costExVat += exVat(ship.cost || 0, rate);
-    vatBreakdown.push(breakdownLine(rate, ship.price || 0, { isShipping: true, calculated: ship.price || 0, overridden: false }));
+    const overridden = overrides[SHIPPING_OVERRIDE_KEY] != null;
+    const amount = overridden ? Number(overrides[SHIPPING_OVERRIDE_KEY]) : ship.price || 0;
+    vatBreakdown.push(breakdownLine(rate, amount, { isShipping: true, calculated: ship.price || 0, overridden }));
   }
   const priceExVat = vatBreakdown.reduce((sum, v) => sum + v.subtotal, 0);
   const totalIncVat = vatBreakdown.reduce((sum, v) => sum + v.totalIncVat, 0);

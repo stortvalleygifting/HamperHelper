@@ -67,7 +67,8 @@ figures are backed out of them (never added on top), and profit is ex-VAT
 price minus ex-VAT cost. A hamper's price is one line per VAT rate for its
 goods (items + packaging), each of which can be overridden in the hamper
 editor (`products.price_overrides`), plus one separate line for shipping at
-the shipping option's own VAT rate. Shipping options have a cost like
+the shipping option's own VAT rate, which can be overridden too (stored
+under the `__shipping` key). Shipping options have a cost like
 packaging options do (migration `004`). The frontend (`public/app.js`) and
 the invoice export (`server/src/lib/pricing.js`) share these rules.
 

@@ -761,9 +761,13 @@ function breakdownLine(rate, totalIncVat, extra){
   return Object.assign({ rate, subtotal, vatAmount: totalIncVat-subtotal, totalIncVat, isShipping:false }, extra||{});
 }
 
+// priceOverrides key for the shipping line (the others are VAT rate labels).
+const SHIPPING_OVERRIDE_KEY = '__shipping';
+
 // A hamper's price is one line per VAT rate for its goods (items + packaging),
 // where p.priceOverrides can replace a rate's calculated amount, plus a single
-// separate line for shipping at the shipping option's own VAT rate.
+// separate line for shipping at the shipping option's own VAT rate, which can
+// also be overridden.
 function computeHamperTotals(p){
   let cost = 0, costExVat = 0, weight = 0;
   const goods = {};
@@ -796,7 +800,9 @@ function computeHamperTotals(p){
     const rate = ship.vat || 'Standard 20%';
     cost += ship.cost||0;
     costExVat += exVat(ship.cost||0, rate);
-    vatBreakdown.push(breakdownLine(rate, ship.price||0, { isShipping:true, calculated: ship.price||0, overridden:false }));
+    const overridden = overrides[SHIPPING_OVERRIDE_KEY]!=null;
+    const amount = overridden ? Number(overrides[SHIPPING_OVERRIDE_KEY]) : (ship.price||0);
+    vatBreakdown.push(breakdownLine(rate, amount, { isShipping:true, calculated: ship.price||0, overridden }));
   }
   const priceExVat = vatBreakdown.reduce((sum,v)=>sum+v.subtotal, 0);
   const totalIncVat = vatBreakdown.reduce((sum,v)=>sum+v.totalIncVat, 0);
@@ -1542,8 +1548,9 @@ function openProductModal(existing, duplicateFrom){
   }
 
   function overrideInput(v){
-    const val = p.priceOverrides[v.rate];
-    return `<input type="text" inputmode="decimal" class="priceOverride" data-rate="${v.rate}" value="${val!=null ? val : ''}" placeholder="${(Math.round(v.calculated*100)/100).toFixed(2)}">`;
+    const key = v.isShipping ? SHIPPING_OVERRIDE_KEY : v.rate;
+    const val = p.priceOverrides[key];
+    return `<input type="text" inputmode="decimal" class="priceOverride" data-rate="${key}" value="${val!=null ? val : ''}" placeholder="${(Math.round(v.calculated*100)/100).toFixed(2)}">`;
   }
 
   function totalsHtml(){
@@ -1563,10 +1570,10 @@ function openProductModal(existing, duplicateFrom){
         ${totals.vatBreakdown.length? `<table class="overrideTable" style="margin-top:10px;"><thead><tr><th>VAT rate</th><th>Ex VAT</th><th>VAT</th><th>Inc VAT</th><th>Override inc VAT (£)</th></tr></thead><tbody>
           ${totals.vatBreakdown.map(v=>`<tr>
             <td>${breakdownLabel(v)}</td><td>${fmtMoney(v.subtotal)}</td><td>${fmtMoney(v.vatAmount)}</td><td>${fmtMoney(v.totalIncVat)}</td>
-            <td>${v.isShipping ? '<span class="savehint">From the Shipping page</span>' : overrideInput(v)}</td>
+            <td>${overrideInput(v)}</td>
           </tr>`).join('')}
         </tbody></table>
-        <div class="savehint">Leave an override blank to use the price worked out from the items and packaging.</div>` : `<div class="savehint">Add items to see a price breakdown.</div>`}
+        <div class="savehint">Leave an override blank to use the calculated price (items and packaging, or the Shipping page for shipping).</div>` : `<div class="savehint">Add items to see a price breakdown.</div>`}
       </div>
     `;
   }
@@ -1711,7 +1718,7 @@ function openProductModal(existing, duplicateFrom){
       if(p.components.some(c=>!c.componentId)){ showToast('Match every item to something in your Items list'); return; }
       p.name = name;
       // Only keep overrides for VAT rates this hamper's goods still use.
-      const liveRates = new Set(computeHamperTotals(Object.assign({}, p, { priceOverrides:{} })).vatBreakdown.filter(v=>!v.isShipping).map(v=>v.rate));
+      const liveRates = new Set(computeHamperTotals(Object.assign({}, p, { priceOverrides:{} })).vatBreakdown.map(v=> v.isShipping ? SHIPPING_OVERRIDE_KEY : v.rate));
       Object.keys(p.priceOverrides).forEach(r=>{ if(!liveRates.has(r)) delete p.priceOverrides[r]; });
       try{
         for(const ph of pendingPhotos){
