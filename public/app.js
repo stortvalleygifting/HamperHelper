@@ -1903,7 +1903,7 @@ function openCustomerModal(existing, opts){
 
 function openProposalModal(existing){
   const todayStr = new Date().toISOString().slice(0,10);
-  const pr = existing ? JSON.parse(JSON.stringify(existing)) : { id:null, customerId: State.customers[0] ? State.customers[0].id : null, proposalDate: todayStr, hamperIds: [], docUrl:'', docName:'', docSource:'' };
+  const pr = existing ? JSON.parse(JSON.stringify(existing)) : { id:null, customerId: null, proposalDate: todayStr, hamperIds: [], docUrl:'', docName:'', docSource:'' };
   // normalize to exactly 10 slots (null = no selection)
   while(pr.hamperIds.length < 10) pr.hamperIds.push(null);
   pr.hamperIds = pr.hamperIds.slice(0,10);
@@ -1917,7 +1917,7 @@ function openProposalModal(existing){
           <div class="field">
             <label>Customer</label>
             ${State.customers.length? `
-              <input type="text" id="f_customer" value="${selectedCust? customerLabel(selectedCust).replace(/"/g,'&quot;') : ''}" placeholder="Search company or contact name...">` : `<div class="savehint">No customers yet — add one below.</div>`}
+              <input type="text" id="f_customer" value="${selectedCust? customerLabel(selectedCust).replace(/"/g,'&quot;') : ''}" placeholder="Select customer (type company or contact name)">` : `<div class="savehint">No customers yet — add one below.</div>`}
             <button class="linkbtn" id="addCustomerBtn" style="margin-top:4px;">+ Add new customer</button>
           </div>
           <div class="field"><label>Proposal date</label><input id="f_propdate" type="date" value="${pr.proposalDate||''}"></div>
@@ -1976,7 +1976,7 @@ function openProposalModal(existing){
 
 function openOrderModal(existing){
   const todayStr = new Date().toISOString().slice(0,10);
-  const o = existing ? JSON.parse(JSON.stringify(existing)) : { id:null, customerId: State.customers[0] ? State.customers[0].id : null, orderDate: todayStr, deliveryDate:'', notes:'', status:'Proposal', readyToInvoice:false, items:[], stockDeducted:false };
+  const o = existing ? JSON.parse(JSON.stringify(existing)) : { id:null, customerId: null, orderDate: todayStr, deliveryDate:'', notes:'', status:'Proposal', readyToInvoice:false, items:[], stockDeducted:false };
 
   function clamp(val, min, max){ return Math.max(min, Math.min(max, val)); }
   const expanded = new Set(); // hamper line indexes whose item list is open
@@ -2074,7 +2074,7 @@ function openOrderModal(existing){
           <div class="field">
             <label>Customer</label>
             ${State.customers.length? `
-              <input type="text" id="f_customer" value="${selectedCust? customerLabel(selectedCust).replace(/"/g,'&quot;') : ''}" placeholder="Search company or contact name...">` : `<div class="savehint">No customers yet — add one below.</div>`}
+              <input type="text" id="f_customer" value="${selectedCust? customerLabel(selectedCust).replace(/"/g,'&quot;') : ''}" placeholder="Select customer (type company or contact name)">` : `<div class="savehint">No customers yet — add one below.</div>`}
             <button class="linkbtn" id="addCustomerBtn" style="margin-top:4px;">+ Add new customer</button>
             ${selectedCust ? `<button class="linkbtn" id="editCustomerBtn" style="margin:4px 0 0 12px;">Edit customer</button>` : ''}
           </div>
