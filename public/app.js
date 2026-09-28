@@ -7,7 +7,13 @@ const ITEM_CATEGORIES = ['Alcohol Free','Beer','Cider','Coffee','Gin','Rum','Tea
 // () => ({ filename, blob }) function that returns the file to download.
 const REPORTS = [
   { id:'ready-to-invoice', label:'Orders ready to invoice (CSV)', generate: ()=> generateReadyToInvoiceReport() },
+  { id:'orders', label:'Orders (Excel)', generate: ()=> generateOrdersReport() },
 ];
+
+const PRIORITIES = ['High','Medium','Low'];
+function priorityRank(p){ const i = PRIORITIES.indexOf(p); return i<0 ? 1 : i; }
+function priorityBadge(p){ p = PRIORITIES.includes(p) ? p : 'Medium'; return `<span class="badge prio-${p.toLowerCase()}">${p} priority</span>`; }
+function escHtml(s){ return String(s==null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 function fmtMoney(n){ return '£' + (Math.round((n||0)*100)/100).toFixed(2); }
 function profitToggleHtml(profit, style){
@@ -122,7 +128,7 @@ function customerLink(cust, text){
 
 // Clicks on these inside a clickable row do their own thing rather than
 // opening the row's edit screen.
-const ROW_CLICK_IGNORE = 'button,a,input,select,textarea,label,.profitToggle,.custLink';
+const ROW_CLICK_IGNORE = 'button,a,input,select,textarea,label,.profitToggle,.custLink,.dragHandle';
 
 // Cost and profit figures are for admins only (the server also withholds
 // the underlying costs from everyone else).
@@ -153,7 +159,19 @@ async function loadAll(){
   }
 }
 
-function setTab(tab){ State.tab = tab; render(); }
+const TABS = ['dashboard','proposals','orders','production','products','stock','customers','packaging','shipping','sources','reports','staff'];
+// The address bar carries the current screen (#orders), so a second tab or a
+// refresh opens where you were. #orders/order/<id> also opens that record.
+function setTab(tab){ State.tab = tab; syncHash(); render(); }
+function syncHash(){ try{ history.replaceState(null, '', '#'+State.tab); }catch(e){ /* not critical */ } }
+function parseHash(){
+  const [tab, kind, id] = decodeURIComponent(location.hash.replace(/^#/, '')).split('/');
+  return { tab: TABS.includes(tab) ? tab : null, kind: kind || null, id: id || null };
+}
+function openInNewTab(ref){
+  const hash = '#' + State.tab + (ref ? `/${ref.kind}/${encodeURIComponent(ref.id)}` : '');
+  window.open(location.origin + location.pathname + hash, '_blank');
+}
 
 function stockById(id){ return State.stock.find(s=>s.id===id); }
 function productById(id){ return State.products.find(p=>p.id===id); }
@@ -200,6 +218,7 @@ function render(){
       ${navItem('staff','Staff')}
       <div class="sidebarFooter">
         <div class="whoami">${State.me? (State.me.displayName || State.me.username) : ''}</div>
+        <button class="ghost small" id="newTabBtn" title="Open Hamper Helper again in another browser tab, on this screen">Open in new tab</button>
         <button class="ghost small" id="logoutBtn">Log out</button>
       </div>
     </div>
@@ -209,6 +228,7 @@ function render(){
     el.addEventListener('click', ()=> setTab(el.dataset.tab));
   });
   document.getElementById('logoutBtn').onclick = logout;
+  document.getElementById('newTabBtn').onclick = ()=> openInNewTab(null);
   const main = document.getElementById('main');
   if(State.tab==='dashboard') main.innerHTML = renderDashboard();
   if(State.tab==='proposals') main.innerHTML = renderProposals();
@@ -306,7 +326,8 @@ function renderDashboard(){
   `;
 }
 
-function orderCard(o, compact){
+function orderCard(o, compact, opts){
+  opts = opts || {};
   const prod = o.items.map(it=>{
     const p = productById(it.productId);
     return `${it.qty} × ${p? p.name : 'Unknown hamper'}`;
@@ -319,15 +340,16 @@ function orderCard(o, compact){
   const totals = computeOrderTotals(o);
   const vatLine = totals.vatBreakdown.length>1 ? totals.vatBreakdown.map(v=>`${breakdownLabel(v)}: ${fmtMoney(v.totalIncVat)}`).join(' · ') : '';
   return `
-    <div class="ordercard clickrow" data-rowkind="order" data-rowid="${o.id}">
+    <div class="ordercard clickrow${opts.draggable ? ' draggableCard' : ''}" data-rowkind="order" data-rowid="${o.id}">
       <div class="orow">
-        <div>
+        ${opts.draggable ? `<div class="dragHandle" title="Drag to move this order up or down the list">⋮⋮</div>` : ''}
+        <div style="flex:1;min-width:0;">
           <div class="oname">${swatch}${customerLink(cust, custLabel)} <span class="mono">#${o.id.slice(-5)}</span></div>
           <div class="ometa">${prod}</div>
           <div class="ometa">${o.orderDate ? 'Ordered: '+o.orderDate : ''} ${o.deliveryDate ? ' · Dispatch: '+o.deliveryDate : ''} ${o.notes ? ' · '+o.notes : ''}</div>
           <div class="ometa">${canSeeCosts() ? `Cost: ${fmtMoney(totals.cost)} &nbsp;·&nbsp; ` : ''}Price: ${fmtMoney(totals.totalIncVat)} (inc VAT)${canSeeCosts() ? ` &nbsp;·&nbsp; Profit: ${profitToggleHtml(totals.profit)} (ex VAT)` : ''}</div>
           ${vatLine ? `<div class="ometa" style="color:var(--text-muted);">${vatLine}</div>` : ''}
-          <div style="margin-top:6px;">${statusBadge(o.status)} ${o.readyToInvoice ? `<span class="badge invoice">Ready to invoice</span>` : ''}</div>
+          <div style="margin-top:6px;">${statusBadge(o.status)} ${priorityBadge(o.priority)} ${o.readyToInvoice ? `<span class="badge invoice">Ready to invoice</span>` : ''}</div>
         </div>
         <div class="oactions">
           ${backLabel ? `<button class="small ghost" data-regress="${o.id}">${backLabel}</button>` : ''}
@@ -395,6 +417,8 @@ function getFilteredSortedOrders(){
     if(col==='customer'){
       const ca = customerById(a.customerId), cb = customerById(b.customerId);
       av = (ca? customerLabel(ca):'').toLowerCase(); bv = (cb? customerLabel(cb):'').toLowerCase();
+    } else if(col==='priority'){
+      av = -priorityRank(a.priority); bv = -priorityRank(b.priority);
     } else if(col==='totalPrice'){
       av = computeOrderTotals(a).totalIncVat; bv = computeOrderTotals(b).totalIncVat;
     } else if(col==='totalCost'){
@@ -441,6 +465,7 @@ function renderOrders(){
           <option value="deliveryDate" ${State.orderSort.col==='deliveryDate'?'selected':''}>Sort: Dispatch date</option>
           <option value="customer" ${State.orderSort.col==='customer'?'selected':''}>Sort: Customer</option>
           <option value="status" ${State.orderSort.col==='status'?'selected':''}>Sort: Status</option>
+          <option value="priority" ${State.orderSort.col==='priority'?'selected':''}>Sort: Priority</option>
           ${canSeeCosts() ? `<option value="totalCost" ${State.orderSort.col==='totalCost'?'selected':''}>Sort: Total cost</option>` : ''}
           <option value="totalPrice" ${State.orderSort.col==='totalPrice'?'selected':''}>Sort: Total price</option>
           ${canSeeCosts() ? `<option value="totalProfit" ${State.orderSort.col==='totalProfit'?'selected':''}>Sort: Total profit</option>` : ''}
@@ -452,15 +477,114 @@ function renderOrders(){
   `;
 }
 
+// Production order: priority, then wherever someone dragged it, then
+// soonest dispatch date (orders with no date last), then oldest order.
+function productionSort(a, b){
+  const pr = priorityRank(a.priority) - priorityRank(b.priority);
+  if(pr) return pr;
+  const ra = a.productionRank==null ? Infinity : a.productionRank, rb = b.productionRank==null ? Infinity : b.productionRank;
+  if(ra !== rb) return ra < rb ? -1 : 1;
+  const da = a.deliveryDate || '9999', db = b.deliveryDate || '9999';
+  if(da !== db) return da < db ? -1 : 1;
+  return (a.orderDate||'') < (b.orderDate||'') ? -1 : (a.orderDate||'') > (b.orderDate||'') ? 1 : 0;
+}
+
+// Drag and drop on the Production list. Pointer events, so it works with a
+// mouse, a finger or a pen; the card moves live as you drag and the new
+// order (and any priority change) is saved when you let go.
+function wireProductionDrag(){
+  document.querySelectorAll('.prodGroup .dragHandle').forEach(handle=>{
+    handle.onpointerdown = (e)=>{
+      if(e.button!==undefined && e.button!==0) return;
+      e.preventDefault();
+      const card = handle.closest('.ordercard');
+      const before = productionListSnapshot();
+      // Listen on the window rather than capturing the pointer: moving the
+      // card in the page would drop a capture.
+      const pointerId = e.pointerId;
+      card.classList.add('dragging');
+      State.dragging = true;
+      let lastY = e.clientY, scrollTimer = null;
+      const place = ()=>{
+        const groups = [...document.querySelectorAll('.prodGroup')];
+        // the group under the pointer, or the nearest one
+        let group = groups.find(g=>{ const r = g.getBoundingClientRect(); return lastY >= r.top && lastY <= r.bottom; });
+        if(!group) group = lastY < groups[0].getBoundingClientRect().top ? groups[0] : groups[groups.length-1];
+        const list = group.querySelector('.prodGroupList');
+        const next = [...list.querySelectorAll('.ordercard:not(.dragging)')].find(c=>{ const r = c.getBoundingClientRect(); return lastY < r.top + r.height/2; });
+        if(next){ if(card.nextElementSibling !== next) list.insertBefore(card, next); }
+        else if(list.lastElementChild !== card) list.appendChild(card);
+        refreshProductionGroups();
+      };
+      const autoScroll = ()=>{
+        const edge = 60;
+        let dy = 0;
+        if(lastY < edge) dy = -12; else if(lastY > window.innerHeight - edge) dy = 12;
+        if(dy){ window.scrollBy(0, dy); place(); }
+      };
+      scrollTimer = setInterval(autoScroll, 30);
+      const onMove = (ev)=>{ if(ev.pointerId!==pointerId) return; ev.preventDefault(); lastY = ev.clientY; place(); };
+      const onEnd = (ev)=>{ if(ev.pointerId===pointerId) finish(); };
+      window.addEventListener('pointermove', onMove, { passive:false });
+      window.addEventListener('pointerup', onEnd);
+      window.addEventListener('pointercancel', onEnd);
+      const finish = async ()=>{
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onEnd);
+        window.removeEventListener('pointercancel', onEnd);
+        clearInterval(scrollTimer);
+        card.classList.remove('dragging');
+        State.dragging = false;
+        const after = productionListSnapshot();
+        if(JSON.stringify(after) === JSON.stringify(before)) return;
+        // show it straight away, then save
+        after.forEach((x,i)=>{ const o = State.orders.find(o=>o.id===x.id); if(o){ o.priority = x.priority; o.productionRank = i; } });
+        render();
+        try{
+          State.orders = await api.orders.productionOrder(after);
+          render();
+          const moved = after.find(x=>{ const b = before.find(y=>y.id===x.id); return b && b.priority !== x.priority; });
+          showToast(moved ? `Moved to ${moved.priority.toLowerCase()} priority` : 'Production order saved');
+        }catch(err){
+          showToast(err.message || 'Could not save the new order');
+          await loadAll(); render();
+        }
+      };
+    };
+  });
+}
+
+function productionListSnapshot(){
+  return [...document.querySelectorAll('.prodGroup')].flatMap(g=>
+    [...g.querySelectorAll('.prodGroupList .ordercard')].map(c=>({ id: c.dataset.rowid, priority: g.dataset.priority })));
+}
+
+function refreshProductionGroups(){
+  document.querySelectorAll('.prodGroup').forEach(g=>{
+    const n = g.querySelectorAll('.prodGroupList .ordercard').length;
+    g.classList.toggle('isEmpty', n===0);
+    const count = g.querySelector('.prodGroupHead .mono');
+    if(count) count.textContent = n;
+  });
+}
+
 function renderProduction(){
-  const active = State.orders.filter(o=>PRODUCTION_STATUSES.includes(o.status));
+  const active = State.orders.filter(o=>PRODUCTION_STATUSES.includes(o.status)).sort(productionSort);
   const req = computeOpenRequirements();
   return `
     <h1>Production</h1>
     <p class="subtitle">What needs assembling right now, and whether stock covers it.</p>
     <div class="panel">
       <h2>Orders to assemble</h2>
-      ${active.length ? active.slice().reverse().map(o=>orderCard(o,false)).join('') : `<div class="empty">No orders waiting on production.</div>`}
+      ${active.length ? `<div class="savehint" style="margin:-6px 0 12px;">Drag an order by its ⋮⋮ handle to change its place in the list. Dropping it under another priority changes its priority.</div>
+        ${PRIORITIES.map(pr=>{
+          const group = active.filter(o=> (PRIORITIES.includes(o.priority) ? o.priority : 'Medium') === pr);
+          return `<div class="prodGroup" data-priority="${pr}">
+            <div class="prodGroupHead">${priorityBadge(pr)} <span class="mono">${group.length}</span></div>
+            <div class="prodGroupList">${group.map(o=>orderCard(o,false,{draggable:true})).join('')}</div>
+            <div class="prodGroupEmpty">No ${pr.toLowerCase()} priority orders. Drop one here.</div>
+          </div>`;
+        }).join('')}` : `<div class="empty">No orders waiting on production.</div>`}
     </div>
     <div class="panel">
       <h2>Item requirements</h2>
@@ -508,6 +632,7 @@ function productSortArrow(col){
 
 function renderProducts(){
   if(!State.productFilter) State.productFilter = { search:'' };
+  if(!State.expandedHampers) State.expandedHampers = new Set();
   if(!State.productSort) State.productSort = { col:'name', dir:'asc' };
   const rows = getFilteredSortedProducts();
   const hideCosts = State.hideHamperCosts || !canSeeCosts();
@@ -523,6 +648,9 @@ function renderProducts(){
         <input id="productSearch" placeholder="Search hamper name, items, packaging..." value="${State.productFilter.search}" style="max-width:280px;">
         ${State.productFilter.search ? `<button class="ghost small" id="clearProductFilters">Clear filters</button>` : ''}
         ${canSeeCosts() ? `<label class="inlineCheck"><input type="checkbox" id="hideHamperCosts" ${hideCosts?'checked':''}> Hide cost and profit</label>` : ''}
+        <span style="flex:1;"></span>
+        <button class="ghost small" id="expandAllHampers">Expand all items</button>
+        <button class="ghost small" id="collapseAllHampers">Collapse all items</button>
       </div>
       ${State.products.length? hscroll(`<table><thead><tr>
           ${cols.map(([key,label])=> key
@@ -533,7 +661,9 @@ function renderProducts(){
         ${rows.length ? rows.map(p=>`<tr class="clickrow" data-rowkind="product" data-rowid="${p.id}">
           <td>${p.photoUrl? `<img src="${p.photoUrl}" class="logoThumb">` : `<div class="logoThumb" style="background:var(--kraft);"></div>`}${(p.photoUrls||[]).length>1 ? `<div class="mono" style="text-align:center;">+${p.photoUrls.length-1}</div>` : ''}</td>
           <td><strong>${p.name}</strong></td>
-          <td style="min-width:220px;">${p.components.map(c=>{const s=stockById(c.componentId); return s? `${c.qty} × ${itemName(s)}` : 'unknown';}).join('<br>') || '—'}</td>
+          <td style="min-width:220px;" class="hamperItemsCell${State.expandedHampers.has(p.id) ? ' open' : ''}">${p.components.length ? `
+            <button class="linkbtn itemsToggle" data-togglehamperitems="${p.id}"><span class="whenClosed">▸ Show ${p.components.length} item${p.components.length===1?'':'s'}</span><span class="whenOpen">▾ Hide items</span></button>
+            <div class="hamperItemsFull">${p.components.map(c=>{const s=stockById(c.componentId); return s? `${c.qty} × ${itemName(s)}` : 'unknown';}).join('<br>')}</div>` : '—'}</td>
           <td>${p.packagingName || '—'}</td>
           <td>${p.shippingName || '—'}</td>
           ${hideCosts ? '' : `<td>${fmtMoney(p.totalCost)}</td>`}
@@ -687,6 +817,90 @@ function downloadStockCsv(){
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
   showToast('CSV downloaded');
+}
+
+function reportFilters(){
+  if(!State.reportFilters) State.reportFilters = { statuses:[], users:[], dateFrom:'', dateTo:'', customerId:null };
+  return State.reportFilters;
+}
+
+// Everyone who has created an order or changed a status, plus current staff.
+function reportUserOptions(){
+  const byName = new Map();
+  State.staff.forEach(st=> byName.set(st.username.toLowerCase(), { username: st.username, label: st.displayName ? `${st.displayName} (${st.username})` : st.username }));
+  State.orders.forEach(o=>{
+    [o.createdBy, ...(o.statusHistory||[]).map(h=>h.username)].filter(Boolean).forEach(u=>{
+      if(!byName.has(u.toLowerCase())) byName.set(u.toLowerCase(), { username: u, label: `${u} (no longer on staff)` });
+    });
+  });
+  return [...byName.values()].sort((a,b)=> a.label.localeCompare(b.label));
+}
+
+function ordersReportFiltersHtml(){
+  const f = reportFilters();
+  const cust = f.customerId ? customerById(f.customerId) : null;
+  const checks = (name, items)=> items.map(it=>`<label class="inlineCheck"><input type="checkbox" data-reportfilter="${name}" value="${escHtml(it.value)}" ${f[name].includes(it.value)?'checked':''}> ${escHtml(it.label)}</label>`).join('');
+  return `
+    <div class="reportFilters">
+      <div class="field">
+        <label>Status <span class="hintInline">(none ticked = all)</span></label>
+        <div class="checkRow">${checks('statuses', ORDER_FLOW.map(st=>({ value: st, label: st })))}</div>
+      </div>
+      <div class="field">
+        <label>User <span class="hintInline">(created the order or changed its status; none ticked = all)</span></label>
+        <div class="checkRow">${checks('users', reportUserOptions().map(u=>({ value: u.username, label: u.label })))}</div>
+      </div>
+      <div class="grid2" style="max-width:420px;">
+        <div class="field"><label>Order date from</label><input type="date" id="rf_from" value="${f.dateFrom}"></div>
+        <div class="field"><label>Order date to</label><input type="date" id="rf_to" value="${f.dateTo}"></div>
+      </div>
+      <div class="field" style="max-width:420px;">
+        <label>Customer</label>
+        <input type="text" id="rf_customer" value="${cust ? escHtml(customerLabel(cust)) : ''}" placeholder="All customers (type to search)">
+      </div>
+      <div class="savehint" style="margin:0 0 12px;">The Excel file has a sheet of orders, a sheet with every hamper line, and each order's status history.</div>
+    </div>`;
+}
+
+function wireOrdersReportFilters(){
+  const f = reportFilters();
+  document.querySelectorAll('[data-reportfilter]').forEach(cb=>{
+    cb.onchange = ()=>{
+      const list = f[cb.dataset.reportfilter];
+      const i = list.indexOf(cb.value);
+      if(cb.checked && i<0) list.push(cb.value);
+      if(!cb.checked && i>=0) list.splice(i,1);
+    };
+  });
+  const from = document.getElementById('rf_from'), to = document.getElementById('rf_to');
+  if(from) from.onchange = ()=>{ f.dateFrom = from.value; };
+  if(to) to.onchange = ()=>{ f.dateTo = to.value; };
+  const custInput = document.getElementById('rf_customer');
+  if(custInput){
+    attachSearchBox(custInput, {
+      options: customerSearchOptions,
+      onPick: (id)=>{ f.customerId = id; },
+      onNoMatch: ()=>{ f.customerId = null; custInput.value = ''; },
+    });
+    custInput.addEventListener('input', ()=>{ if(!custInput.value.trim()) f.customerId = null; });
+  }
+}
+
+async function generateOrdersReport(){
+  const f = reportFilters();
+  if(f.dateFrom && f.dateTo && f.dateFrom > f.dateTo){ showToast('The "from" date is after the "to" date'); return null; }
+  try{
+    const { blob, filename, headers } = await api.reports.orders({
+      statuses: f.statuses, users: f.users, dateFrom: f.dateFrom || null, dateTo: f.dateTo || null, customerId: f.customerId || null,
+    });
+    const count = parseInt(headers.get('X-Order-Count') || '0', 10);
+    if(!count){ showToast('No orders match those choices'); return null; }
+    showToast(`${count} order${count===1?'':'s'} in the report`);
+    return { filename, blob };
+  }catch(e){
+    showToast(e.message || 'Could not build the report');
+    return null;
+  }
 }
 
 async function generateReadyToInvoiceReport(){
@@ -1138,6 +1352,7 @@ function renderReports(){
             : `<option>No reports available yet</option>`}
         </select>
       </div>
+      ${State.reportSelection==='orders' ? ordersReportFiltersHtml() : ''}
       <button class="primary" id="downloadReportBtn" ${REPORTS.length? '' : 'disabled'}>Download</button>
       ${!REPORTS.length? `<div class="savehint" style="margin-top:10px;">Reports will show up here once they've been added.</div>` : ''}
     </div>
@@ -1235,22 +1450,118 @@ function renderCustomers(){
 }
 
 // ---------- Modals ----------
-function closeModal(){ document.getElementById('modalRoot').innerHTML=''; }
+function closeModal(){ document.getElementById('modalRoot').innerHTML=''; ModalStates.clear(); lastModalKey = null; }
+
+// What each open pop-up needs remembering: whether anything in it has been
+// changed since it opened, and which record it shows (for "open in new tab").
+// Keyed by the pop-up's title, because pop-ups repaint themselves as you
+// edit, and a pop-up opened from inside another (a new customer from an
+// order) hands back to it when closed. Cleared when the last one closes.
+const ModalStates = new Map();
+let pendingModalRef = null, lastModalKey = null;
+function noteModalRef(kind, id){ pendingModalRef = { kind, id }; }
+function currentModal(){ return document.querySelector('#modalRoot .modal'); }
+function modalKey(modal){ const h = modal.querySelector('h3'); return h ? h.textContent.trim() : ''; }
+function modalState(modal){
+  modal = modal || currentModal();
+  if(!modal) return null;
+  const key = modalKey(modal);
+  if(!ModalStates.has(key)) ModalStates.set(key, { dirty:false, ref:null });
+  return ModalStates.get(key);
+}
+function isModalDirty(){
+  const modal = currentModal();
+  return !!(modal && modal.querySelector('#saveBtn') && modalState(modal).dirty);
+}
 
 // Every pop-up gets a close (x) at its top right. It does whatever the
 // pop-up's own Cancel/Close button does (some return to another pop-up).
+// Next to it, a button opens the same screen (and record) in a new tab.
 new MutationObserver(()=>{
-  const modal = document.querySelector('#modalRoot .modal');
-  if(!modal || modal.querySelector(':scope > .modalClose')) return;
+  const modal = currentModal();
+  if(!modal) return;
+  // Back in a pop-up we'd already seen means the one opened from it has
+  // closed, so forget that one.
+  const key = modalKey(modal);
+  if(lastModalKey && lastModalKey !== key && ModalStates.has(key)) ModalStates.delete(lastModalKey);
+  lastModalKey = key;
+  const state = modalState(modal);
+  if(pendingModalRef){ state.ref = pendingModalRef; pendingModalRef = null; }
+  if(modal.querySelector(':scope > .modalClose')) return;
   const bar = document.createElement('div');
   bar.className = 'modalClose';
-  bar.innerHTML = '<button type="button" aria-label="Close" title="Close">×</button>';
-  bar.querySelector('button').onclick = ()=>{
+  bar.innerHTML = '<button type="button" class="modalNewTab" aria-label="Open in new tab" title="Open this in a new browser tab">⧉</button><button type="button" class="modalX" aria-label="Close" title="Close">×</button>';
+  bar.querySelector('.modalNewTab').onclick = ()=> openInNewTab(modalState(modal).ref);
+  bar.querySelector('.modalX').onclick = ()=>{
     const cancel = modal.querySelector('#cancelBtn');
     if(cancel) cancel.click(); else closeModal();
   };
   modal.prepend(bar);
 }).observe(document.getElementById('modalRoot'), { childList:true, subtree:true });
+
+// Anything typed, picked, added or removed in a pop-up marks it as changed.
+// Buttons that only show/hide things or open another pop-up carry
+// data-nodirty.
+(function trackModalChanges(){
+  const root = document.getElementById('modalRoot');
+  const mark = (e)=>{
+    const modal = e.target.closest && e.target.closest('.modal');
+    if(!modal || e.target.closest('.modalClose,[data-nodirty]')) return;
+    modalState(modal).dirty = true;
+  };
+  root.addEventListener('input', mark, true);
+  root.addEventListener('change', mark, true);
+  root.addEventListener('click', (e)=>{
+    const btn = e.target.closest && e.target.closest('button');
+    if(!btn || btn.closest('.modalClose,[data-nodirty]') || btn.matches('#cancelBtn,#saveBtn,#confirmBtn,.expandBtn')) return;
+    mark(e);
+  }, true);
+  // Cancel (and the x, which clicks Cancel) asks first if there are changes.
+  let bypass = false;
+  root.addEventListener('click', (e)=>{
+    const cancel = e.target.closest && e.target.closest('#cancelBtn');
+    if(!cancel || bypass || !isModalDirty()) return;
+    e.preventDefault(); e.stopPropagation();
+    openUnsavedChangesDialog({
+      onSave: ()=>{ const save = currentModal() && currentModal().querySelector('#saveBtn'); if(save) save.click(); },
+      onDiscard: ()=>{
+        const modal = currentModal();
+        if(modal) ModalStates.delete(modalKey(modal));
+        bypass = true;
+        try{ cancel.click(); } finally { bypass = false; }
+      },
+    });
+  }, true);
+})();
+
+function openUnsavedChangesDialog({ onSave, onDiscard }){
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-overlay unsavedOverlay';
+  wrap.innerHTML = `
+    <div class="modal" style="width:400px;" role="alertdialog" aria-labelledby="unsavedTitle">
+      <h3 id="unsavedTitle">Save your changes?</h3>
+      <p style="font-size:13.5px;color:var(--text-secondary);margin:0 0 20px;line-height:1.5;">You've changed something in this pop-up without saving it.</p>
+      <div class="stackedActions">
+        <button class="primary" data-act="save">Save changes</button>
+        <button class="danger" data-act="discard">Close without saving</button>
+        <button class="ghost" data-act="keep">Keep editing</button>
+      </div>
+    </div>`;
+  const done = ()=>{ wrap.remove(); document.removeEventListener('keydown', onKey, true); };
+  const onKey = (e)=>{ if(e.key==='Escape'){ e.stopPropagation(); done(); } };
+  document.addEventListener('keydown', onKey, true);
+  wrap.querySelector('[data-act="save"]').onclick = ()=>{ done(); onSave(); };
+  wrap.querySelector('[data-act="discard"]').onclick = ()=>{ done(); onDiscard(); };
+  wrap.querySelector('[data-act="keep"]').onclick = done;
+  document.body.appendChild(wrap);
+  wrap.querySelector('[data-act="save"]').focus();
+}
+
+// Closing or reloading the browser tab with unsaved changes in a pop-up gets
+// the browser's own "leave this page?" warning.
+window.addEventListener('beforeunload', (e)=>{
+  if(isModalDirty()){ e.preventDefault(); e.returnValue = ''; }
+});
 
 function openConfirmModal(message, onConfirm, opts){
   opts = opts || {};
@@ -1273,6 +1584,7 @@ function openConfirmModal(message, onConfirm, opts){
 }
 
 function openSourceModal(existing){
+  if(existing) noteModalRef('source', existing.id);
   const s = existing || { id:null, label:'' };
   document.getElementById('modalRoot').innerHTML = `
     <div class="modal-overlay" id="ovl">
@@ -1297,6 +1609,7 @@ function openSourceModal(existing){
 }
 
 function openStaffModal(existing){
+  if(existing) noteModalRef('staff', existing.id);
   const s = existing || { id:null, username:'', displayName:'', isAdmin:false };
   document.getElementById('modalRoot').innerHTML = `
     <div class="modal-overlay" id="ovl">
@@ -1337,6 +1650,7 @@ function openStaffModal(existing){
 }
 
 function openPackagingModal(existing){
+  if(existing) noteModalRef('packaging', existing.id);
   const p = existing || { id:null, size:'', price:0, weight:'', cost:'', vat:'Standard 20%' };
   document.getElementById('modalRoot').innerHTML = `
     <div class="modal-overlay" id="ovl">
@@ -1384,6 +1698,7 @@ function openPackagingModal(existing){
 }
 
 function openShippingModal(existing){
+  if(existing) noteModalRef('shipping', existing.id);
   const p = existing || { id:null, label:'', price:0, cost:'', vat:'Standard 20%' };
   document.getElementById('modalRoot').innerHTML = `
     <div class="modal-overlay" id="ovl">
@@ -1428,6 +1743,7 @@ function openShippingModal(existing){
 }
 
 function openStockModal(existing, copyFrom){
+  if(existing) noteModalRef('stock', existing.id);
   // A copy starts as a new item with the same details but no stock of its own.
   if(copyFrom) existing = null;
   const s = copyFrom ? Object.assign({}, copyFrom, { id:null, qtyOnHand:0, qtyOnOrder:0 }) : existing || { id:null, category:'', brand:'', itemName:'', v:false, vg:false, g:false, n:false, cost:0, price:0, weight:'', vat:'Standard 20%', availability:'In stock', qtyOnHand:0, qtyOnOrder:0 };
@@ -1513,9 +1829,11 @@ function openStockModal(existing, copyFrom){
 }
 
 function openProductModal(existing, duplicateFrom){
+  if(existing) noteModalRef('product', existing.id);
   const p = existing ? JSON.parse(JSON.stringify(existing))
     : duplicateFrom ? Object.assign(JSON.parse(JSON.stringify(duplicateFrom)), { id:null, name:'' })
-    : { id:null, name:'', components:[], packagingId:null, shippingId:null, photoUrl:'', photoUrls:[], priceOverrides:{} };
+    : { id:null, name:'', components:[], packagingId:null, shippingId:null, photoUrl:'', photoUrls:[], priceOverrides:{}, notes:'' };
+  if(p.notes==null) p.notes = '';
   if(!Array.isArray(p.photoUrls)) p.photoUrls = p.photoUrl ? [p.photoUrl] : [];
   if(!p.priceOverrides) p.priceOverrides = {};
   const duplicateOfName = duplicateFrom ? duplicateFrom.name : null;
@@ -1636,6 +1954,7 @@ function openProductModal(existing, duplicateFrom){
             <div id="photoList">${photosHtml()}</div>
             <input id="f_photo" type="file" accept="image/*" multiple style="margin-top:8px;">
           </div>
+          <div class="field"><label>Notes</label><textarea id="f_pnotes" rows="3">${escHtml(p.notes)}</textarea></div>
           <label>Items</label>
           <div id="compList">${renderComps()}</div>
           ${State.stock.length? `<button class="linkbtn" id="addCompBtn">+ Add item</button>` : `<div class="savehint">Add items first, then come back to build this recipe.</div>`}
@@ -1655,6 +1974,7 @@ function openProductModal(existing, duplicateFrom){
     wireProfitToggles(document.getElementById('hamperTotals'));
     wireOverrides();
     document.getElementById('f_name').oninput = (e)=>{ p.name = e.target.value; };
+    document.getElementById('f_pnotes').oninput = (e)=>{ p.notes = e.target.value; };
     document.getElementById('f_packaging').onchange = (e)=>{ p.packagingId = e.target.value || null; refreshTotals(); };
     document.getElementById('f_shipping').onchange = (e)=>{ p.shippingId = e.target.value || null; refreshTotals(); };
     const wirePhotos = ()=>{
@@ -1811,6 +2131,7 @@ function openCustomerOrdersModal(customerId){
 }
 
 function openCustomerModal(existing, opts){
+  if(existing) noteModalRef('customer', existing.id);
   opts = opts || {};
   const c = existing ? JSON.parse(JSON.stringify(existing)) : { id:null, companyName:'', contactName:'', email:'', phonePrimary:'', phoneSecondary:'', contactName2:'', phone2Primary:'', phone2Secondary:'', email2:'', ribbonColor:'', fontColor:'', sourceId:null, notes:'', logoUrl:'' };
   let pendingLogoFile = null; // uploaded to /api/uploads only once Save is clicked
@@ -1902,6 +2223,7 @@ function openCustomerModal(existing, opts){
 }
 
 function openProposalModal(existing){
+  if(existing) noteModalRef('proposal', existing.id);
   const todayStr = new Date().toISOString().slice(0,10);
   const pr = existing ? JSON.parse(JSON.stringify(existing)) : { id:null, customerId: null, proposalDate: todayStr, hamperIds: [], docUrl:'', docName:'', docSource:'' };
   // normalize to exactly 10 slots (null = no selection)
@@ -1918,7 +2240,7 @@ function openProposalModal(existing){
             <label>Customer</label>
             ${State.customers.length? `
               <input type="text" id="f_customer" value="${selectedCust? customerLabel(selectedCust).replace(/"/g,'&quot;') : ''}" placeholder="Select customer (type company or contact name)">` : `<div class="savehint">No customers yet — add one below.</div>`}
-            <button class="linkbtn" id="addCustomerBtn" style="margin-top:4px;">+ Add new customer</button>
+            <button class="linkbtn" id="addCustomerBtn" data-nodirty style="margin-top:4px;">+ Add new customer</button>
           </div>
           <div class="field"><label>Proposal date</label><input id="f_propdate" type="date" value="${pr.proposalDate||''}"></div>
           <label>Hamper options</label>
@@ -1976,7 +2298,9 @@ function openProposalModal(existing){
 
 function openOrderModal(existing){
   const todayStr = new Date().toISOString().slice(0,10);
-  const o = existing ? JSON.parse(JSON.stringify(existing)) : { id:null, customerId: null, orderDate: todayStr, deliveryDate:'', notes:'', status:'Proposal', readyToInvoice:false, items:[], stockDeducted:false };
+  const o = existing ? JSON.parse(JSON.stringify(existing)) : { id:null, customerId: null, orderDate: todayStr, deliveryDate:'', notes:'', status:'Proposal', priority:'Medium', readyToInvoice:false, items:[], stockDeducted:false };
+  if(!PRIORITIES.includes(o.priority)) o.priority = 'Medium';
+  if(existing) noteModalRef('order', existing.id);
 
   function clamp(val, min, max){ return Math.max(min, Math.min(max, val)); }
   const expanded = new Set(); // hamper line indexes whose item list is open
@@ -2007,7 +2331,7 @@ function openOrderModal(existing){
       <tr>
         <td>
           <div style="display:flex;gap:6px;align-items:center;">
-            <button class="small ghost expandBtn" data-toggleitems="${i}" title="${open?'Hide':'Show'} items in this hamper">${open?'▾':'▸'}</button>
+            <button class="small ghost expandBtn" data-nodirty data-toggleitems="${i}" title="${open?'Hide':'Show'} items in this hamper">${open?'▾':'▸'}</button>
             <select data-iidx="${i}" class="itemSelect">
               ${State.products.map(p=>`<option value="${p.id}" ${p.id===it.productId?'selected':''}>${p.name}</option>`).join('')}
             </select>
@@ -2075,13 +2399,17 @@ function openOrderModal(existing){
             <label>Customer</label>
             ${State.customers.length? `
               <input type="text" id="f_customer" value="${selectedCust? customerLabel(selectedCust).replace(/"/g,'&quot;') : ''}" placeholder="Select customer (type company or contact name)">` : `<div class="savehint">No customers yet — add one below.</div>`}
-            <button class="linkbtn" id="addCustomerBtn" style="margin-top:4px;">+ Add new customer</button>
-            ${selectedCust ? `<button class="linkbtn" id="editCustomerBtn" style="margin:4px 0 0 12px;">Edit customer</button>` : ''}
+            <button class="linkbtn" id="addCustomerBtn" data-nodirty style="margin-top:4px;">+ Add new customer</button>
+            ${selectedCust ? `<button class="linkbtn" id="editCustomerBtn" data-nodirty style="margin:4px 0 0 12px;">Edit customer</button>` : ''}
           </div>
           ${customerDetailsHtml(selectedCust)}
           <div class="grid2">
             <div class="field"><label>Order date</label><input id="f_orderdate" type="date" value="${o.orderDate||''}"></div>
             <div class="field"><label>Dispatch date</label><input id="f_date" type="date" value="${o.deliveryDate||''}"></div>
+          </div>
+          <div class="field" style="max-width:200px;">
+            <label>Priority</label>
+            <select id="f_priority">${PRIORITIES.map(pr=>`<option value="${pr}" ${pr===o.priority?'selected':''}>${pr}</option>`).join('')}</select>
           </div>
           <label>Hampers ordered</label>
           <div id="itemList">${renderItems()}</div>
@@ -2092,6 +2420,7 @@ function openOrderModal(existing){
           <div class="field">
             <label style="display:flex;align-items:center;gap:8px;color:var(--text);font-size:13.5px;"><input type="checkbox" id="f_invoice" style="width:auto;" ${o.readyToInvoice?'checked':''}> Ready to invoice</label>
           </div>
+          ${existing ? statusHistoryHtml(o) : ''}
           <div class="row-between" style="margin-top:16px;">
             <button class="ghost" id="cancelBtn">Cancel</button>
             <button class="primary" id="saveBtn">Save</button>
@@ -2118,6 +2447,7 @@ function openOrderModal(existing){
     document.getElementById('f_date').oninput = (e)=>{ o.deliveryDate = e.target.value; };
     document.getElementById('f_notes').oninput = (e)=>{ o.notes = e.target.value; };
     document.getElementById('f_invoice').onchange = (e)=>{ o.readyToInvoice = e.target.checked; };
+    document.getElementById('f_priority').onchange = (e)=>{ o.priority = e.target.value; };
     document.getElementById('addCustomerBtn').onclick = ()=>{
       openCustomerModal(null, {
         onDone: (newCustomer)=>{ o.customerId = newCustomer.id; paint(); },
@@ -2184,6 +2514,7 @@ function openOrderModal(existing){
       o.deliveryDate = document.getElementById('f_date').value;
       o.notes = document.getElementById('f_notes').value.trim();
       o.readyToInvoice = document.getElementById('f_invoice').checked;
+      o.priority = document.getElementById('f_priority').value;
       try{
         State.orders = existing ? await api.orders.update(o.id, o) : await api.orders.create(o);
         closeModal(); render(); showToast('Order saved');
@@ -2193,7 +2524,28 @@ function openOrderModal(existing){
   paint();
 }
 
+function fmtDateTime(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleString('en-GB', { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
+}
+
+function statusHistoryHtml(o){
+  const rows = (o.statusHistory||[]).slice().sort((a,b)=> a.changedAt < b.changedAt ? -1 : a.changedAt > b.changedAt ? 1 : 0);
+  return `<div class="field" style="margin-top:14px;">
+    <label>Status history</label>
+    ${rows.length ? `<table class="historyTable"><thead><tr><th>When</th><th>Change</th><th>By</th></tr></thead><tbody>
+      ${rows.map(h=>`<tr>
+        <td style="white-space:nowrap;">${fmtDateTime(h.changedAt)}</td>
+        <td>${h.fromStatus ? `${escHtml(h.fromStatus)} → ${escHtml(h.toStatus)}` : `Created as ${escHtml(h.toStatus)}`}</td>
+        <td>${escHtml(h.username || 'Unknown')}</td>
+      </tr>`).join('')}
+    </tbody></table>` : `<div class="savehint" style="margin:0;">No status changes recorded yet. Changes are recorded from now on.</div>`}
+  </div>`;
+}
+
 function openRowEditor(kind, id){
+  noteModalRef(kind, id);
   const find = (list)=> list.find(x=>x.id===id);
   if(kind==='order'){ const o = find(State.orders); if(o) openOrderModal(o); }
   if(kind==='proposal'){ const pr = find(State.proposals); if(pr) openProposalModal(pr); }
@@ -2241,7 +2593,22 @@ function attachHandlers(){
     };
   }
   const reportSelect = document.getElementById('reportSelect');
-  if(reportSelect) reportSelect.onchange = (e)=>{ State.reportSelection = e.target.value; };
+  if(reportSelect) reportSelect.onchange = (e)=>{ State.reportSelection = e.target.value; render(); };
+  wireOrdersReportFilters();
+  wireProductionDrag();
+  document.querySelectorAll('[data-togglehamperitems]').forEach(b=>{
+    b.onclick = ()=>{
+      const id = b.dataset.togglehamperitems;
+      const cell = b.closest('.hamperItemsCell');
+      if(State.expandedHampers.has(id)) State.expandedHampers.delete(id); else State.expandedHampers.add(id);
+      cell.classList.toggle('open', State.expandedHampers.has(id));
+      wireHScrolls();
+    };
+  });
+  const expandAll = document.getElementById('expandAllHampers');
+  if(expandAll) expandAll.onclick = ()=>{ State.products.forEach(p=>State.expandedHampers.add(p.id)); render(); };
+  const collapseAll = document.getElementById('collapseAllHampers');
+  if(collapseAll) collapseAll.onclick = ()=>{ State.expandedHampers.clear(); render(); };
   const downloadReportBtn = document.getElementById('downloadReportBtn');
   if(downloadReportBtn) downloadReportBtn.onclick = async ()=>{
     const report = REPORTS.find(r=>r.id===State.reportSelection);
@@ -2611,10 +2978,58 @@ setUnauthorizedHandler(()=>{
   renderLogin('Your session expired — please log in again');
 });
 
+// ---------- Keeping up with other people's changes ----------
+// Every 30 seconds, and whenever you come back to this tab, fetch everything
+// again and redraw if anything changed. Skipped while a pop-up is open, while
+// dragging, or while typing in a box on the page, so nothing you're doing is
+// interrupted. Refreshes only count as "using the screen" (for the 3-hour
+// idle logout) if you've clicked or typed since the last one.
+const AUTO_REFRESH_MS = 30 * 1000;
+let lastUserActivity = Date.now(), lastRefreshAt = Date.now(), refreshing = false;
+['pointerdown','keydown','wheel','touchstart'].forEach(ev=> document.addEventListener(ev, ()=>{ lastUserActivity = Date.now(); }, { capture:true, passive:true }));
+
+function dataSignature(){
+  return JSON.stringify([State.products, State.stock, State.orders, State.customers, State.packaging, State.shipping, State.sources, State.proposals, State.staff]);
+}
+
+async function refreshFromServer(){
+  if(refreshing || !State.me || !State.loaded) return;
+  if(document.visibilityState !== 'visible') return;
+  if(document.getElementById('modalRoot').innerHTML.trim() || document.querySelector('.unsavedOverlay') || State.dragging) return;
+  const active = document.activeElement;
+  if(active && active.closest && active.closest('#main') && active.matches('input,textarea,select')) return;
+  refreshing = true;
+  const background = lastUserActivity < lastRefreshAt;
+  lastRefreshAt = Date.now();
+  try{
+    const [data, staff] = await Promise.all([api.bootstrap({ background }), api.staff.list({ background })]);
+    // Something may have opened or started while we waited.
+    if(document.getElementById('modalRoot').innerHTML.trim() || State.dragging || !State.me) return;
+    const before = dataSignature();
+    Object.assign(State, { products: data.products, stock: data.stock, orders: data.orders, customers: data.customers, packaging: data.packaging, shipping: data.shipping, sources: data.sources, proposals: data.proposals, staff });
+    if(dataSignature() !== before){
+      const y = window.scrollY;
+      render();
+      window.scrollTo(0, y);
+    }
+  }catch(e){
+    // A dropped connection just waits for the next try; a logged-out
+    // session has already been sent to the login screen.
+  }finally{
+    refreshing = false;
+  }
+}
+setInterval(refreshFromServer, AUTO_REFRESH_MS);
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') refreshFromServer(); });
+
 (async function init(){
   document.getElementById('app').innerHTML = `<div style="padding:40px;color:#6B6656;font-family:Inter,sans-serif;">Loading…</div>`;
+  const start = parseHash();
+  if(start.tab) State.tab = start.tab;
   State.me = await api.auth.session();
   if(!State.me){ renderLogin(); return; }
   await loadAll();
   render();
+  syncHash();
+  if(start.kind && start.id) openRowEditor(start.kind, start.id);
 })();

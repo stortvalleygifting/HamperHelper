@@ -12,6 +12,9 @@ function setUnauthorizedHandler(fn) { onUnauthorized = fn; }
 async function apiRequest(method, path, body, reqOpts) {
   reqOpts = reqOpts || {};
   const opts = { method, headers: {} };
+  // Automatic refreshes say so, so the server doesn't count them as someone
+  // using the screen when deciding whether to log out an idle session.
+  if (reqOpts.background) opts.headers['X-Background-Refresh'] = '1';
   if (body !== undefined) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
@@ -58,7 +61,7 @@ async function apiDownload(path, body){
 }
 
 const api = {
-  bootstrap: () => apiRequest('GET', '/api/bootstrap'),
+  bootstrap: (reqOpts) => apiRequest('GET', '/api/bootstrap', undefined, reqOpts),
 
   auth: {
     login: (username, password) => apiRequest('POST', '/api/login', { username, password }, { skipUnauthorizedHandler: true }),
@@ -66,7 +69,7 @@ const api = {
     session: () => apiRequest('GET', '/api/session'),
   },
   staff: {
-    list: () => apiRequest('GET', '/api/staff'),
+    list: (reqOpts) => apiRequest('GET', '/api/staff', undefined, reqOpts),
     create: (item) => apiRequest('POST', '/api/staff', item),
     update: (id, item) => apiRequest('PUT', `/api/staff/${id}`, item),
     remove: (id) => apiRequest('DELETE', `/api/staff/${id}`),

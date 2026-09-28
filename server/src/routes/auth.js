@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { pool } from '../db.js';
 import { verifyPassword } from '../lib/passwords.js';
 import { staffToApi } from '../lib/mappers.js';
+import { isIdleExpired } from '../lib/session.js';
 
 const router = Router();
 
@@ -19,6 +20,7 @@ router.post('/login', async (req, res) => {
   req.session.regenerate((err) => {
     if (err) return res.status(500).json({ error: 'Could not start session' });
     req.session.staffId = staff.id;
+    req.session.lastActive = Date.now();
     res.json(staffToApi(staff));
   });
 });
@@ -32,6 +34,8 @@ router.post('/logout', (req, res) => {
 
 router.get('/session', async (req, res) => {
   if (!req.session || !req.session.staffId) return res.json(null);
+  if (isIdleExpired(req)) return req.session.destroy(() => res.json(null));
+  req.session.lastActive = Date.now();
   const { rows } = await pool.query('SELECT * FROM staff WHERE id = $1', [req.session.staffId]);
   if (!rows[0]) return res.json(null);
   res.json(staffToApi(rows[0]));

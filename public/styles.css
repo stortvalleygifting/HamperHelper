@@ -159,6 +159,37 @@
   .modal{position:relative;}
   .modalClose{position:sticky;top:-22px;height:0;display:flex;justify-content:flex-end;z-index:6;margin:-12px -12px 0 0;}
   .modalClose button{width:30px;height:30px;padding:0;border-radius:50%;font-size:18px;line-height:1;background:var(--card);border-color:var(--border);box-shadow:0 1px 3px rgba(0,0,0,0.08);}
+  .modalClose{gap:6px;}
+  .modalClose .modalNewTab{font-size:15px;}
+  .unsavedOverlay{z-index:70;}
+  .sidebarFooter #newTabBtn{margin-bottom:6px;}
+  /* Order priority */
+  .badge.prio-high{background:var(--berry-light);color:var(--berry);}
+  .badge.prio-medium{background:var(--gold-light);color:var(--gold);}
+  .badge.prio-low{background:#EFEEE8;color:var(--text-secondary);}
+  /* Production list: one group per priority, cards dragged by their handle */
+  .prodGroup{margin-bottom:14px;}
+  .prodGroupHead{display:flex;align-items:center;gap:8px;margin:0 0 8px;}
+  .prodGroupList{min-height:8px;}
+  .prodGroupEmpty{display:none;border:1px dashed var(--kraft-line);border-radius:10px;padding:14px;text-align:center;font-size:12.5px;color:var(--text-muted);margin-bottom:10px;}
+  .prodGroup.isEmpty .prodGroupEmpty{display:block;}
+  .dragHandle{flex:none;align-self:stretch;display:flex;align-items:center;padding:0 6px;margin:-4px 0 -4px -6px;cursor:grab;color:var(--text-muted);font-size:16px;letter-spacing:-3px;touch-action:none;user-select:none;-webkit-user-select:none;border-radius:6px;}
+  .dragHandle:hover{background:var(--paper);color:var(--ink);}
+  .ordercard.dragging{opacity:0.85;box-shadow:0 8px 22px rgba(0,0,0,0.16);border-color:var(--ink-soft);cursor:grabbing;}
+  body:has(.ordercard.dragging){cursor:grabbing;user-select:none;-webkit-user-select:none;}
+  /* Hampers list: items column folds away */
+  .hamperItemsCell .hamperItemsFull,.hamperItemsCell .whenOpen{display:none;}
+  .hamperItemsCell.open .hamperItemsFull,.hamperItemsCell.open .whenOpen{display:block;}
+  .hamperItemsCell.open .whenClosed{display:none;}
+  .hamperItemsCell .itemsToggle{padding:0 0 4px;}
+  .hamperItemsCell .hamperItemsFull{white-space:normal;}
+  /* Status history in the order pop-up */
+  .historyTable{font-size:12.5px;}
+  .historyTable td,.historyTable th{padding:5px 8px;}
+  /* Orders report filters */
+  .reportFilters{margin:4px 0 6px;}
+  .checkRow{display:flex;flex-wrap:wrap;gap:6px 16px;}
+  .hintInline{font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted);}
   .searchList{position:fixed;z-index:80;background:var(--card);border:0.5px solid var(--kraft-line);border-radius:7px;box-shadow:0 6px 18px rgba(0,0,0,0.12);max-height:240px;overflow-y:auto;font-size:13.5px;}
   .searchOpt{padding:7px 10px;cursor:pointer;}
   .searchOpt.active,.searchOpt:hover{background:var(--paper);}
