@@ -349,7 +349,7 @@ function orderCard(o, compact, opts){
           <div class="ometa">${o.orderDate ? 'Ordered: '+o.orderDate : ''} ${o.deliveryDate ? ' · Dispatch: '+o.deliveryDate : ''} ${o.notes ? ' · '+o.notes : ''}</div>
           <div class="ometa">${canSeeCosts() ? `Cost: ${fmtMoney(totals.cost)} &nbsp;·&nbsp; ` : ''}Price: ${fmtMoney(totals.totalIncVat)} (inc VAT)${canSeeCosts() ? ` &nbsp;·&nbsp; Profit: ${profitToggleHtml(totals.profit)} (ex VAT)` : ''}</div>
           ${vatLine ? `<div class="ometa" style="color:var(--text-muted);">${vatLine}</div>` : ''}
-          <div style="margin-top:6px;">${statusBadge(o.status)} ${priorityBadge(o.priority)} ${o.readyToInvoice ? `<span class="badge invoice">Ready to invoice</span>` : ''}</div>
+          <div style="margin-top:6px;">${statusBadge(o.status)} ${priorityBadge(o.priority)} ${o.readyToInvoice ? `<span class="badge invoice">Ready to invoice</span>` : ''} ${o.invoiceSent ? `<span class="badge packed">Invoice sent</span>` : ''}</div>
         </div>
         <div class="oactions">
           ${backLabel ? `<button class="small ghost" data-regress="${o.id}">${backLabel}</button>` : ''}
@@ -411,6 +411,8 @@ function getFilteredSortedOrders(){
   if(f.status) rows = rows.filter(o=>o.status===f.status);
   if(f.readyToInvoice==='yes') rows = rows.filter(o=>o.readyToInvoice);
   if(f.readyToInvoice==='no') rows = rows.filter(o=>!o.readyToInvoice);
+  if(f.readyToInvoice==='sent') rows = rows.filter(o=>o.invoiceSent);
+  if(f.readyToInvoice==='notsent') rows = rows.filter(o=>!o.invoiceSent);
   const { col, dir } = State.orderSort;
   rows.sort((a,b)=>{
     let av, bv;
@@ -457,6 +459,8 @@ function renderOrders(){
           <option value="">All orders</option>
           <option value="yes" ${State.orderFilter.readyToInvoice==='yes'?'selected':''}>Ready to invoice</option>
           <option value="no" ${State.orderFilter.readyToInvoice==='no'?'selected':''}>Not ready to invoice</option>
+          <option value="sent" ${State.orderFilter.readyToInvoice==='sent'?'selected':''}>Invoice sent</option>
+          <option value="notsent" ${State.orderFilter.readyToInvoice==='notsent'?'selected':''}>Invoice not sent</option>
         </select>
         ${(State.orderFilter.search || State.orderFilter.status || State.orderFilter.readyToInvoice) ? `<button class="ghost small" id="clearOrderFilters">Clear filters</button>` : ''}
         <span style="flex:1;"></span>
@@ -2329,7 +2333,7 @@ function openProposalModal(existing){
 
 function openOrderModal(existing){
   const todayStr = new Date().toISOString().slice(0,10);
-  const o = existing ? JSON.parse(JSON.stringify(existing)) : { id:null, customerId: null, orderDate: todayStr, deliveryDate:'', notes:'', status:'Proposal', priority:'Medium', readyToInvoice:false, items:[], stockDeducted:false };
+  const o = existing ? JSON.parse(JSON.stringify(existing)) : { id:null, customerId: null, orderDate: todayStr, deliveryDate:'', notes:'', status:'Proposal', priority:'Medium', readyToInvoice:false, invoiceSent:false, items:[], stockDeducted:false };
   if(!PRIORITIES.includes(o.priority)) o.priority = 'Medium';
   if(existing) noteModalRef('order', existing.id);
 
@@ -2449,7 +2453,10 @@ function openOrderModal(existing){
           ${State.products.length? `<button class="linkbtn" id="addItemBtn">+ Add hamper</button>` : `<div class="savehint">Add a hamper recipe first.</div>`}
           <div id="orderTotals">${orderTotalsHtml()}</div>
           <div class="field" style="margin-top:12px;">
-            <label style="display:flex;align-items:center;gap:8px;color:var(--text);font-size:13.5px;"><input type="checkbox" id="f_invoice" style="width:auto;" ${o.readyToInvoice?'checked':''}> Ready to invoice</label>
+            <div style="display:flex;gap:24px;flex-wrap:wrap;">
+              <label style="display:flex;align-items:center;gap:8px;color:var(--text);font-size:13.5px;margin:0;"><input type="checkbox" id="f_invoice" style="width:auto;" ${o.readyToInvoice?'checked':''}> Ready to invoice</label>
+              <label style="display:flex;align-items:center;gap:8px;color:var(--text);font-size:13.5px;margin:0;"><input type="checkbox" id="f_invoicesent" style="width:auto;" ${o.invoiceSent?'checked':''}> Invoice sent</label>
+            </div>
           </div>
           ${existing ? statusHistoryHtml(o) : ''}
           <div class="row-between" style="margin-top:16px;">
@@ -2478,6 +2485,7 @@ function openOrderModal(existing){
     document.getElementById('f_date').oninput = (e)=>{ o.deliveryDate = e.target.value; };
     document.getElementById('f_notes').oninput = (e)=>{ o.notes = e.target.value; };
     document.getElementById('f_invoice').onchange = (e)=>{ o.readyToInvoice = e.target.checked; };
+    document.getElementById('f_invoicesent').onchange = (e)=>{ o.invoiceSent = e.target.checked; };
     document.getElementById('f_priority').onchange = (e)=>{ o.priority = e.target.value; };
     document.getElementById('addCustomerBtn').onclick = ()=>{
       openCustomerModal(null, {
@@ -2545,6 +2553,7 @@ function openOrderModal(existing){
       o.deliveryDate = document.getElementById('f_date').value;
       o.notes = document.getElementById('f_notes').value.trim();
       o.readyToInvoice = document.getElementById('f_invoice').checked;
+      o.invoiceSent = document.getElementById('f_invoicesent').checked;
       o.priority = document.getElementById('f_priority').value;
       try{
         State.orders = existing ? await api.orders.update(o.id, o) : await api.orders.create(o);

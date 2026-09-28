@@ -61,9 +61,9 @@ router.post('/', async (req, res) => {
   try {
     await client.query('BEGIN');
     await client.query(
-      `INSERT INTO orders (id, customer_id, order_date, delivery_date, status, notes, ready_to_invoice, stock_deducted, priority, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,false,$8,$9)`,
-      [id, req.body.customerId || null, req.body.orderDate || null, req.body.deliveryDate || null, status, req.body.notes || '', !!req.body.readyToInvoice, priorityFromBody(req.body), req.staff ? req.staff.username : null]
+      `INSERT INTO orders (id, customer_id, order_date, delivery_date, status, notes, ready_to_invoice, stock_deducted, priority, created_by, invoice_sent)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,false,$8,$9,$10)`,
+      [id, req.body.customerId || null, req.body.orderDate || null, req.body.deliveryDate || null, status, req.body.notes || '', !!req.body.readyToInvoice, priorityFromBody(req.body), req.staff ? req.staff.username : null, !!req.body.invoiceSent]
     );
     await recordStatus(client, id, null, status, req.staff);
     await saveItems(client, id, req.body.items);
@@ -106,8 +106,8 @@ router.put('/:id', async (req, res) => {
   try {
     await client.query('BEGIN');
     const { rowCount } = await client.query(
-      `UPDATE orders SET customer_id=$1, order_date=$2, delivery_date=$3, notes=$4, ready_to_invoice=$5, priority=$6 WHERE id=$7`,
-      [req.body.customerId || null, req.body.orderDate || null, req.body.deliveryDate || null, req.body.notes || '', !!req.body.readyToInvoice, priorityFromBody(req.body), req.params.id]
+      `UPDATE orders SET customer_id=$1, order_date=$2, delivery_date=$3, notes=$4, ready_to_invoice=$5, priority=$6, invoice_sent=$7 WHERE id=$8`,
+      [req.body.customerId || null, req.body.orderDate || null, req.body.deliveryDate || null, req.body.notes || '', !!req.body.readyToInvoice, priorityFromBody(req.body), !!req.body.invoiceSent, req.params.id]
     );
     if (!rowCount) {
       await client.query('ROLLBACK');

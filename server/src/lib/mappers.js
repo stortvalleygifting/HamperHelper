@@ -114,6 +114,7 @@ export function orderToApi(row, items, history) {
     status: row.status,
     notes: row.notes || '',
     readyToInvoice: row.ready_to_invoice,
+    invoiceSent: !!row.invoice_sent,
     stockDeducted: row.stock_deducted,
     invoiceNumber: row.invoice_number,
     items: items.map((it) => ({

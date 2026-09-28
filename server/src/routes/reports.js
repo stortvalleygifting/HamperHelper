@@ -170,7 +170,7 @@ router.post('/orders', async (req, res) => {
     ['Order', 'id', 18], ['Customer', 'customer', 30], ['Main contact', 'contact', 20], ['Email', 'email', 26], ['Phone', 'phone', 16],
     ['Status', 'status', 12], ['Priority', 'priority', 10], ['Order date', 'orderDate', 12], ['Dispatch date', 'dispatchDate', 13],
     ['Hampers', 'hampers', 40], ['Total qty', 'qty', 9], ['Ribbon colour', 'ribbon', 14], ['Font colour', 'font', 14],
-    ['Order notes', 'notes', 30], ['Customer notes', 'customerNotes', 30], ['Ready to invoice', 'readyToInvoice', 10], ['Invoice number', 'invoiceNumber', 14],
+    ['Order notes', 'notes', 30], ['Customer notes', 'customerNotes', 30], ['Ready to invoice', 'readyToInvoice', 10], ['Invoice sent', 'invoiceSent', 10], ['Invoice number', 'invoiceNumber', 14],
     ['Created by', 'createdBy', 14], ['Last status change', 'lastChange', 20], ['Changed by', 'lastChangeBy', 14],
     ['Total ex VAT', 'exVat', 13, money], ['VAT', 'vat', 11, money], ['Total inc VAT', 'incVat', 13, money],
   ];
@@ -217,7 +217,7 @@ router.post('/orders', async (req, res) => {
       id: o.id, customer: custName, contact: cust ? cust.contactName : '', email: cust ? cust.email : '', phone: cust ? cust.phonePrimary : '',
       status: o.status, priority: o.priority, orderDate: o.orderDate || '', dispatchDate: o.deliveryDate || '',
       hampers: hampers.join(', '), qty, ribbon: cust ? cust.ribbonColor : '', font: cust ? cust.fontColor : '',
-      notes: o.notes, customerNotes: cust ? cust.notes : '', readyToInvoice: o.readyToInvoice ? 'Yes' : 'No', invoiceNumber: o.invoiceNumber || '',
+      notes: o.notes, customerNotes: cust ? cust.notes : '', readyToInvoice: o.readyToInvoice ? 'Yes' : 'No', invoiceSent: o.invoiceSent ? 'Yes' : 'No', invoiceNumber: o.invoiceNumber || '',
       createdBy: o.createdBy, lastChange: last ? fmtWhen(last.changedAt) : '', lastChangeBy: last ? last.username : '',
       exVat: round2(exVat), vat: round2(incVat - exVat), incVat: round2(incVat),
     };
