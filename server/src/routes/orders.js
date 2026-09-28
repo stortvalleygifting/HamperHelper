@@ -7,16 +7,35 @@ import { listStock } from './stock.js';
 const router = Router();
 
 const ORDER_FLOW = ['Proposal', 'Confirmed', 'Packing', 'Packed', 'Shipped', 'Closed'];
+const PRIORITIES = ['High', 'Medium', 'Low'];
+
+function priorityFromBody(body) {
+  return PRIORITIES.includes(body.priority) ? body.priority : 'Medium';
+}
+
+function groupBy(rows, key) {
+  const map = new Map();
+  for (const r of rows) {
+    if (!map.has(r[key])) map.set(r[key], []);
+    map.get(r[key]).push(r);
+  }
+  return map;
+}
 
 async function listOrders() {
   const { rows: orders } = await pool.query('SELECT * FROM orders ORDER BY order_date ASC NULLS LAST, id ASC');
   const { rows: items } = await pool.query('SELECT * FROM order_items ORDER BY id ASC');
-  const byOrder = new Map();
-  for (const it of items) {
-    if (!byOrder.has(it.order_id)) byOrder.set(it.order_id, []);
-    byOrder.get(it.order_id).push(it);
-  }
-  return orders.map((o) => orderToApi(o, byOrder.get(o.id) || []));
+  const { rows: history } = await pool.query('SELECT * FROM order_status_history ORDER BY changed_at ASC, id ASC');
+  const itemsByOrder = groupBy(items, 'order_id');
+  const historyByOrder = groupBy(history, 'order_id');
+  return orders.map((o) => orderToApi(o, itemsByOrder.get(o.id) || [], historyByOrder.get(o.id) || []));
+}
+
+async function recordStatus(client, orderId, fromStatus, toStatus, staff) {
+  await client.query(
+    'INSERT INTO order_status_history (order_id, from_status, to_status, staff_id, username) VALUES ($1,$2,$3,$4,$5)',
+    [orderId, fromStatus, toStatus, staff ? staff.id : null, staff ? staff.username : null]
+  );
 }
 
 async function saveItems(client, orderId, items) {
@@ -37,14 +56,16 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
   if (!req.body.items || !req.body.items.length) return res.status(400).json({ error: 'At least one hamper is required' });
   const id = uid('ord');
+  const status = ORDER_FLOW.includes(req.body.status) ? req.body.status : 'Proposal';
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query(
-      `INSERT INTO orders (id, customer_id, order_date, delivery_date, status, notes, ready_to_invoice, stock_deducted)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,false)`,
-      [id, req.body.customerId || null, req.body.orderDate || null, req.body.deliveryDate || null, req.body.status || 'Proposal', req.body.notes || '', !!req.body.readyToInvoice]
+      `INSERT INTO orders (id, customer_id, order_date, delivery_date, status, notes, ready_to_invoice, stock_deducted, priority, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,false,$8,$9)`,
+      [id, req.body.customerId || null, req.body.orderDate || null, req.body.deliveryDate || null, status, req.body.notes || '', !!req.body.readyToInvoice, priorityFromBody(req.body), req.staff ? req.staff.username : null]
     );
+    await recordStatus(client, id, null, status, req.staff);
     await saveItems(client, id, req.body.items);
     await client.query('COMMIT');
   } catch (err) {
@@ -56,14 +77,37 @@ router.post('/', async (req, res) => {
   res.status(201).json(await listOrders());
 });
 
+// Saves the Production page's drag-and-drop order: body.orders is the list
+// top to bottom, each { id, priority } (dragging into another priority group
+// changes the order's priority to match).
+router.put('/production-order', async (req, res) => {
+  const list = Array.isArray(req.body.orders) ? req.body.orders : [];
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (let i = 0; i < list.length; i++) {
+      const o = list[i];
+      if (!o || !o.id) continue;
+      await client.query('UPDATE orders SET production_rank = $1, priority = $2 WHERE id = $3', [i, priorityFromBody(o), o.id]);
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+  res.json(await listOrders());
+});
+
 router.put('/:id', async (req, res) => {
   if (!req.body.items || !req.body.items.length) return res.status(400).json({ error: 'At least one hamper is required' });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const { rowCount } = await client.query(
-      `UPDATE orders SET customer_id=$1, order_date=$2, delivery_date=$3, notes=$4, ready_to_invoice=$5 WHERE id=$6`,
-      [req.body.customerId || null, req.body.orderDate || null, req.body.deliveryDate || null, req.body.notes || '', !!req.body.readyToInvoice, req.params.id]
+      `UPDATE orders SET customer_id=$1, order_date=$2, delivery_date=$3, notes=$4, ready_to_invoice=$5, priority=$6 WHERE id=$7`,
+      [req.body.customerId || null, req.body.orderDate || null, req.body.deliveryDate || null, req.body.notes || '', !!req.body.readyToInvoice, priorityFromBody(req.body), req.params.id]
     );
     if (!rowCount) {
       await client.query('ROLLBACK');
@@ -162,6 +206,7 @@ router.post('/:id/move', async (req, res) => {
     }
 
     await client.query('UPDATE orders SET status = $1 WHERE id = $2', [newStatus, req.params.id]);
+    await recordStatus(client, req.params.id, order.status, newStatus, req.staff);
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK');

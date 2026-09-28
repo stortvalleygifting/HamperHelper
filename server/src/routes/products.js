@@ -56,8 +56,8 @@ router.post('/', async (req, res) => {
     await client.query('BEGIN');
     const photoUrls = photoUrlsFromBody(req.body);
     await client.query(
-      'INSERT INTO products (id, name, packaging_id, shipping_id, photo_url, photo_urls, price_overrides) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-      [id, name, req.body.packagingId || null, req.body.shippingId || null, photoUrls[0] || '', JSON.stringify(photoUrls), JSON.stringify(priceOverridesFromBody(req.body))]
+      'INSERT INTO products (id, name, packaging_id, shipping_id, photo_url, photo_urls, price_overrides, notes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+      [id, name, req.body.packagingId || null, req.body.shippingId || null, photoUrls[0] || '', JSON.stringify(photoUrls), JSON.stringify(priceOverridesFromBody(req.body)), (req.body.notes || '').trim()]
     );
     await saveComponents(client, id, req.body.components);
     await client.query('COMMIT');
@@ -78,8 +78,8 @@ router.put('/:id', async (req, res) => {
     await client.query('BEGIN');
     const photoUrls = photoUrlsFromBody(req.body);
     const { rowCount } = await client.query(
-      'UPDATE products SET name=$1, packaging_id=$2, shipping_id=$3, photo_url=$4, photo_urls=$5, price_overrides=$6 WHERE id=$7',
-      [name, req.body.packagingId || null, req.body.shippingId || null, photoUrls[0] || '', JSON.stringify(photoUrls), JSON.stringify(priceOverridesFromBody(req.body)), req.params.id]
+      'UPDATE products SET name=$1, packaging_id=$2, shipping_id=$3, photo_url=$4, photo_urls=$5, price_overrides=$6, notes=$7 WHERE id=$8',
+      [name, req.body.packagingId || null, req.body.shippingId || null, photoUrls[0] || '', JSON.stringify(photoUrls), JSON.stringify(priceOverridesFromBody(req.body)), (req.body.notes || '').trim(), req.params.id]
     );
     if (!rowCount) {
       await client.query('ROLLBACK');

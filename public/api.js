@@ -43,6 +43,20 @@ async function apiUploadFile(path, file, extraFields) {
   return data;
 }
 
+// POSTs JSON and resolves with { blob, filename, headers } for a file download.
+async function apiDownload(path, body){
+  const res = await fetch(path, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(body||{}) });
+  if(!res.ok){
+    let data = null;
+    try { data = await res.json(); } catch (e) { /* no body */ }
+    if (res.status === 401 && onUnauthorized) onUnauthorized();
+    throw new Error((data && data.error) || `Download failed (${res.status})`);
+  }
+  const disposition = res.headers.get('Content-Disposition') || '';
+  const m = /filename="([^"]+)"/.exec(disposition);
+  return { blob: await res.blob(), filename: m ? m[1] : 'download', headers: res.headers };
+}
+
 const api = {
   bootstrap: () => apiRequest('GET', '/api/bootstrap'),
 
@@ -95,6 +109,7 @@ const api = {
     update: (id, item) => apiRequest('PUT', `/api/orders/${id}`, item),
     remove: (id) => apiRequest('DELETE', `/api/orders/${id}`),
     move: (id, direction) => apiRequest('POST', `/api/orders/${id}/move`, { direction }),
+    productionOrder: (orders) => apiRequest('PUT', '/api/orders/production-order', { orders }),
   },
   proposals: {
     create: (item) => apiRequest('POST', '/api/proposals', item),
@@ -107,5 +122,6 @@ const api = {
   },
   reports: {
     readyToInvoice: () => apiRequest('POST', '/api/reports/ready-to-invoice'),
+    orders: (filters) => apiDownload('/api/reports/orders', filters),
   },
 };

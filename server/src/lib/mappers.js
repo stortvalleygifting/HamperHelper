@@ -85,6 +85,7 @@ export function productToApi(row, components) {
     packagingId: row.packaging_id,
     shippingId: row.shipping_id,
     photoUrl: row.photo_url || '',
+    notes: row.notes || '',
     photoUrls: Array.isArray(row.photo_urls) && row.photo_urls.length ? row.photo_urls : row.photo_url ? [row.photo_url] : [],
     priceOverrides: row.price_overrides || {},
     components: components.map((c) => ({
@@ -95,9 +96,18 @@ export function productToApi(row, components) {
   };
 }
 
-export function orderToApi(row, items) {
+export function orderToApi(row, items, history) {
   return {
     id: row.id,
+    priority: row.priority || 'Medium',
+    productionRank: row.production_rank,
+    createdBy: row.created_by || '',
+    statusHistory: (history || []).map((h) => ({
+      fromStatus: h.from_status,
+      toStatus: h.to_status,
+      username: h.username || '',
+      changedAt: h.changed_at instanceof Date ? h.changed_at.toISOString() : h.changed_at,
+    })),
     customerId: row.customer_id,
     orderDate: row.order_date,
     deliveryDate: row.delivery_date,

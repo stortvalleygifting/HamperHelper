@@ -13,10 +13,13 @@ export const sessionMiddleware = session({
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
+  // Log out after 3 hours with no activity: every request pushes the expiry
+  // back another 3 hours.
+  rolling: true,
   cookie: {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    maxAge: 3 * 60 * 60 * 1000,
   },
 });
 

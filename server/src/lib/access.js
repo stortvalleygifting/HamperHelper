@@ -5,9 +5,9 @@ import { pool } from '../db.js';
 // effect on the very next request rather than when the session expires.
 export async function loadStaff(req, res, next) {
   try {
-    const { rows } = await pool.query('SELECT id, is_admin FROM staff WHERE id = $1', [req.session.staffId]);
+    const { rows } = await pool.query('SELECT id, username, is_admin FROM staff WHERE id = $1', [req.session.staffId]);
     if (!rows[0]) return res.status(401).json({ error: 'Not logged in' });
-    req.staff = { id: rows[0].id, isAdmin: rows[0].is_admin };
+    req.staff = { id: rows[0].id, username: rows[0].username, isAdmin: rows[0].is_admin };
     next();
   } catch (err) {
     next(err);
