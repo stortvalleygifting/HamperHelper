@@ -2411,13 +2411,13 @@ function openOrderModal(existing){
             <label>Priority</label>
             <select id="f_priority">${PRIORITIES.map(pr=>`<option value="${pr}" ${pr===o.priority?'selected':''}>${pr}</option>`).join('')}</select>
           </div>
+          ${selectedCust && selectedCust.notes ? `<div class="field"><label>Customer notes (from the customer record)</label><div class="customerNotes">${escHtml(selectedCust.notes)}</div></div>` : ''}
+          <div class="field"><label>Order notes</label><textarea id="f_notes" rows="2">${escHtml(o.notes)}</textarea></div>
           <label>Hampers ordered</label>
           <div id="itemList">${renderItems()}</div>
           ${State.products.length? `<button class="linkbtn" id="addItemBtn">+ Add hamper</button>` : `<div class="savehint">Add a hamper recipe first.</div>`}
           <div id="orderTotals">${orderTotalsHtml()}</div>
-          ${selectedCust && selectedCust.notes ? `<div class="field" style="margin-top:12px;"><label>Customer notes (from the customer record)</label><div class="customerNotes">${selectedCust.notes.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</div></div>` : ''}
-          <div class="field" style="margin-top:12px;"><label>Order notes</label><textarea id="f_notes" rows="2">${o.notes}</textarea></div>
-          <div class="field">
+          <div class="field" style="margin-top:12px;">
             <label style="display:flex;align-items:center;gap:8px;color:var(--text);font-size:13.5px;"><input type="checkbox" id="f_invoice" style="width:auto;" ${o.readyToInvoice?'checked':''}> Ready to invoice</label>
           </div>
           ${existing ? statusHistoryHtml(o) : ''}

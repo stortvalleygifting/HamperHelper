@@ -101,6 +101,12 @@ npm run create-admin -- --username=admin --password=... [--name="Jo Bloggs"] [--
 Running it again with an existing username resets that account's password —
 handy if everyone gets locked out.
 
+Sessions log out after 3 hours without use. The page refreshes its data from
+the server every 30 seconds (so other people's changes show up), and those
+refreshes send `X-Background-Refresh: 1` unless someone has clicked or typed
+since the last one; `requireAuth` only counts other requests as activity
+(`req.session.lastActive`).
+
 ## Deploying (Railway or similar)
 
 The Express server serves both the API *and* the `public/` frontend (see
@@ -159,3 +165,13 @@ Order fulfilment (`Proposal → Confirmed → Packing → Packed → Shipped →
 Closed`) and its stock deduction/restoration are handled by
 `POST /api/orders/:id/move`, in one DB transaction — this used to be a
 read-modify-write against a local array.
+
+Each status change (and each order's creation) is recorded in
+`order_status_history` with the username and time, and returned on the order
+as `statusHistory`. Orders also carry a `priority` (High/Medium/Low) and a
+`productionRank`, set by dragging on the Production page
+(`PUT /api/orders/production-order`).
+
+`POST /api/reports/orders` builds the Orders Excel report (orders, hamper
+lines and status history sheets) from the filters on the Reports page. Cost
+and profit columns are only included for admins.
