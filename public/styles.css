@@ -188,7 +188,15 @@
   .historyTable td,.historyTable th{padding:5px 8px;}
   /* Orders report filters */
   .reportFilters{margin:4px 0 6px;}
-  .checkRow{display:flex;flex-wrap:wrap;gap:6px 16px;}
+  .multiSelect{position:relative;max-width:420px;}
+  .multiSelectBtn{width:100%;display:flex;justify-content:space-between;align-items:center;gap:8px;text-align:left;background:#fff;border:0.5px solid var(--border);font-weight:400;font-size:13.5px;padding:8px 10px;}
+  .multiSelectText{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .multiSelectCaret{flex:none;color:var(--text-muted);}
+  .multiSelectMenu{display:none;position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:30;background:var(--card);border:0.5px solid var(--kraft-line);border-radius:7px;box-shadow:0 6px 18px rgba(0,0,0,0.12);max-height:260px;overflow-y:auto;padding:4px 0;}
+  .multiSelect.open .multiSelectMenu{display:block;}
+  .multiSelectOpt{padding:6px 12px;font-size:13.5px;color:var(--text);}
+  .multiSelectOpt:hover{background:var(--paper);}
+  .multiSelectFoot{border-top:0.5px solid var(--border);padding:2px 12px;margin-top:4px;}
   .hintInline{font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted);}
   .searchList{position:fixed;z-index:80;background:var(--card);border:0.5px solid var(--kraft-line);border-radius:7px;box-shadow:0 6px 18px rgba(0,0,0,0.12);max-height:240px;overflow-y:auto;font-size:13.5px;}
   .searchOpt{padding:7px 10px;cursor:pointer;}

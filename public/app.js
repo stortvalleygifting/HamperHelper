@@ -836,19 +836,32 @@ function reportUserOptions(){
   return [...byName.values()].sort((a,b)=> a.label.localeCompare(b.label));
 }
 
+function multiSelectSummary(selected, items, allLabel){
+  if(!selected.length) return allLabel;
+  const labels = items.filter(it=>selected.includes(it.value)).map(it=>it.label);
+  return labels.length <= 2 ? labels.join(', ') : `${labels.length} selected`;
+}
+
 function ordersReportFiltersHtml(){
   const f = reportFilters();
   const cust = f.customerId ? customerById(f.customerId) : null;
-  const checks = (name, items)=> items.map(it=>`<label class="inlineCheck"><input type="checkbox" data-reportfilter="${name}" value="${escHtml(it.value)}" ${f[name].includes(it.value)?'checked':''}> ${escHtml(it.label)}</label>`).join('');
+  // A dropdown button that opens a list of tick boxes.
+  const multi = (name, items, allLabel)=> `<div class="multiSelect" data-multiselect="${name}" data-all="${escHtml(allLabel)}">
+      <button type="button" class="multiSelectBtn"><span class="multiSelectText">${escHtml(multiSelectSummary(f[name], items, allLabel))}</span><span class="multiSelectCaret">▾</span></button>
+      <div class="multiSelectMenu">
+        ${items.map(it=>`<label class="inlineCheck multiSelectOpt"><input type="checkbox" data-reportfilter="${name}" value="${escHtml(it.value)}" data-label="${escHtml(it.label)}" ${f[name].includes(it.value)?'checked':''}> ${escHtml(it.label)}</label>`).join('')}
+        <div class="multiSelectFoot"><button type="button" class="linkbtn" data-multiclear="${name}">Clear</button></div>
+      </div>
+    </div>`;
   return `
     <div class="reportFilters">
       <div class="field">
-        <label>Status <span class="hintInline">(none ticked = all)</span></label>
-        <div class="checkRow">${checks('statuses', ORDER_FLOW.map(st=>({ value: st, label: st })))}</div>
+        <label>Status</label>
+        ${multi('statuses', ORDER_FLOW.map(st=>({ value: st, label: st })), 'All statuses')}
       </div>
       <div class="field">
-        <label>User <span class="hintInline">(created the order or changed its status; none ticked = all)</span></label>
-        <div class="checkRow">${checks('users', reportUserOptions().map(u=>({ value: u.username, label: u.label })))}</div>
+        <label>User <span class="hintInline">(created the order or changed its status)</span></label>
+        ${multi('users', reportUserOptions().map(u=>({ value: u.username, label: u.label })), 'All users')}
       </div>
       <div class="grid2" style="max-width:420px;">
         <div class="field"><label>Order date from</label><input type="date" id="rf_from" value="${f.dateFrom}"></div>
@@ -864,12 +877,30 @@ function ordersReportFiltersHtml(){
 
 function wireOrdersReportFilters(){
   const f = reportFilters();
+  const summarise = (box)=>{
+    const name = box.dataset.multiselect;
+    const items = [...box.querySelectorAll('[data-reportfilter]')].map(cb=>({ value: cb.value, label: cb.dataset.label }));
+    box.querySelector('.multiSelectText').textContent = multiSelectSummary(f[name], items, box.dataset.all);
+  };
   document.querySelectorAll('[data-reportfilter]').forEach(cb=>{
     cb.onchange = ()=>{
       const list = f[cb.dataset.reportfilter];
       const i = list.indexOf(cb.value);
       if(cb.checked && i<0) list.push(cb.value);
       if(!cb.checked && i>=0) list.splice(i,1);
+      summarise(cb.closest('.multiSelect'));
+    };
+  });
+  document.querySelectorAll('.multiSelect').forEach(box=>{
+    box.querySelector('.multiSelectBtn').onclick = ()=>{
+      const opening = !box.classList.contains('open');
+      document.querySelectorAll('.multiSelect.open').forEach(b=>b.classList.remove('open'));
+      if(opening) box.classList.add('open');
+    };
+    box.querySelector('[data-multiclear]').onclick = ()=>{
+      f[box.dataset.multiselect].length = 0;
+      box.querySelectorAll('[data-reportfilter]').forEach(cb=>{ cb.checked = false; });
+      summarise(box);
     };
   });
   const from = document.getElementById('rf_from'), to = document.getElementById('rf_to');
@@ -2976,6 +3007,14 @@ async function logout(){
 setUnauthorizedHandler(()=>{
   State.me = null;
   renderLogin('Your session expired — please log in again');
+});
+
+// Report dropdowns close when you click elsewhere or press Escape.
+document.addEventListener('click', (e)=>{
+  document.querySelectorAll('.multiSelect.open').forEach(b=>{ if(!b.contains(e.target)) b.classList.remove('open'); });
+});
+document.addEventListener('keydown', (e)=>{
+  if(e.key==='Escape') document.querySelectorAll('.multiSelect.open').forEach(b=>b.classList.remove('open'));
 });
 
 // ---------- Keeping up with other people's changes ----------
