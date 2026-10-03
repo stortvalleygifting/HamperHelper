@@ -7,14 +7,15 @@ import { listCustomers } from './customers.js';
 import { listProducts } from './products.js';
 import { listOrders } from './orders.js';
 import { listProposals } from './proposals.js';
+import { listColours } from './colours.js';
 
 const router = Router();
 
 router.get('/', async (req, res) => {
-  const [stock, packaging, shipping, sources, customers, products, orders, proposals] = await Promise.all([
-    listStock(), listPackaging(), listShipping(), listSources(), listCustomers(), listProducts(), listOrders(), listProposals(),
+  const [stock, packaging, shipping, sources, customers, products, orders, proposals, colours] = await Promise.all([
+    listStock(), listPackaging(), listShipping(), listSources(), listCustomers(), listProducts(), listOrders(), listProposals(), listColours(),
   ]);
-  res.json({ stock, packaging, shipping, sources, customers, products, orders, proposals });
+  res.json({ stock, packaging, shipping, sources, customers, products, orders, proposals, colours });
 });
 
 export default router;

@@ -6,6 +6,8 @@ import { docUpload } from '../lib/storage.js';
 
 const router = Router();
 const PROPOSAL_SLOTS = 10;
+export const PROPOSAL_STATUSES = ['Draft', 'Sent', 'Revision required', 'Declined', 'Accepted'];
+const statusFromBody = (body) => (PROPOSAL_STATUSES.includes(body.status) ? body.status : 'Draft');
 
 async function listProposals() {
   const { rows: proposals } = await pool.query('SELECT * FROM proposals ORDER BY proposal_date DESC NULLS LAST, id DESC');
@@ -38,7 +40,7 @@ router.post('/', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query('INSERT INTO proposals (id, customer_id, proposal_date) VALUES ($1,$2,$3)', [id, req.body.customerId || null, req.body.proposalDate || null]);
+    await client.query('INSERT INTO proposals (id, customer_id, proposal_date, status) VALUES ($1,$2,$3,$4)', [id, req.body.customerId || null, req.body.proposalDate || null, statusFromBody(req.body)]);
     await saveHampers(client, id, req.body.hamperIds);
     await client.query('COMMIT');
   } catch (err) {
@@ -56,7 +58,7 @@ router.put('/:id', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const { rowCount } = await client.query('UPDATE proposals SET customer_id=$1, proposal_date=$2 WHERE id=$3', [req.body.customerId || null, req.body.proposalDate || null, req.params.id]);
+    const { rowCount } = await client.query('UPDATE proposals SET customer_id=$1, proposal_date=$2, status=$3 WHERE id=$4', [req.body.customerId || null, req.body.proposalDate || null, statusFromBody(req.body), req.params.id]);
     if (!rowCount) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Proposal not found' });

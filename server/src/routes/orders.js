@@ -38,15 +38,25 @@ async function recordStatus(client, orderId, fromStatus, toStatus, staff) {
   );
 }
 
+// A line is either a hamper (productId) or a single item (stockId).
 async function saveItems(client, orderId, items) {
   await client.query('DELETE FROM order_items WHERE order_id = $1', [orderId]);
   for (const it of items || []) {
-    if (!it.productId) continue;
+    const isItem = it.kind === 'item';
+    const productId = isItem ? null : it.productId || null;
+    const stockId = isItem ? it.stockId || null : null;
+    if (!productId && !stockId) continue;
     await client.query(
-      'INSERT INTO order_items (order_id, product_id, qty, qty_packed, qty_shipped) VALUES ($1,$2,$3,$4,$5)',
-      [orderId, it.productId, Number(it.qty) || 0, Number(it.qtyPacked) || 0, Number(it.qtyShipped) || 0]
+      'INSERT INTO order_items (order_id, product_id, stock_id, qty, qty_packed, qty_shipped) VALUES ($1,$2,$3,$4,$5,$6)',
+      [orderId, productId, stockId, Number(it.qty) || 0, Number(it.qtyPacked) || 0, Number(it.qtyShipped) || 0]
     );
   }
+}
+
+// Ticking "Invoice sent" takes the order off the ready-to-invoice list.
+function invoiceFlags(body) {
+  const invoiceSent = !!body.invoiceSent;
+  return { invoiceSent, readyToInvoice: invoiceSent ? false : !!body.readyToInvoice };
 }
 
 router.get('/', async (req, res) => {
@@ -54,17 +64,20 @@ router.get('/', async (req, res) => {
 });
 
 router.post('/', async (req, res) => {
-  if (!req.body.items || !req.body.items.length) return res.status(400).json({ error: 'At least one hamper is required' });
+  if (!req.body.items || !req.body.items.length) return res.status(400).json({ error: 'Add at least one hamper or item' });
   const id = uid('ord');
+  const flags = invoiceFlags(req.body);
   const status = ORDER_FLOW.includes(req.body.status) ? req.body.status : 'Proposal';
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query(
-      `INSERT INTO orders (id, customer_id, order_date, delivery_date, status, notes, ready_to_invoice, stock_deducted, priority, created_by, invoice_sent)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,false,$8,$9,$10)`,
-      [id, req.body.customerId || null, req.body.orderDate || null, req.body.deliveryDate || null, status, req.body.notes || '', !!req.body.readyToInvoice, priorityFromBody(req.body), req.staff ? req.staff.username : null, !!req.body.invoiceSent]
+      `INSERT INTO orders (id, customer_id, order_date, delivery_date, status, notes, ready_to_invoice, stock_deducted, priority, created_by, invoice_sent, proposal_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,false,$8,$9,$10,$11)`,
+      [id, req.body.customerId || null, req.body.orderDate || null, req.body.deliveryDate || null, status, req.body.notes || '', flags.readyToInvoice, priorityFromBody(req.body), req.staff ? req.staff.username : null, flags.invoiceSent, req.body.proposalId || null]
     );
+    // An order made from a proposal marks that proposal Accepted.
+    if (req.body.proposalId) await client.query("UPDATE proposals SET status = 'Accepted' WHERE id = $1", [req.body.proposalId]);
     await recordStatus(client, id, null, status, req.staff);
     await saveItems(client, id, req.body.items);
     await client.query('COMMIT');
@@ -101,13 +114,14 @@ router.put('/production-order', async (req, res) => {
 });
 
 router.put('/:id', async (req, res) => {
-  if (!req.body.items || !req.body.items.length) return res.status(400).json({ error: 'At least one hamper is required' });
+  if (!req.body.items || !req.body.items.length) return res.status(400).json({ error: 'Add at least one hamper or item' });
+  const flags = invoiceFlags(req.body);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const { rowCount } = await client.query(
       `UPDATE orders SET customer_id=$1, order_date=$2, delivery_date=$3, notes=$4, ready_to_invoice=$5, priority=$6, invoice_sent=$7 WHERE id=$8`,
-      [req.body.customerId || null, req.body.orderDate || null, req.body.deliveryDate || null, req.body.notes || '', !!req.body.readyToInvoice, priorityFromBody(req.body), !!req.body.invoiceSent, req.params.id]
+      [req.body.customerId || null, req.body.orderDate || null, req.body.deliveryDate || null, req.body.notes || '', flags.readyToInvoice, priorityFromBody(req.body), flags.invoiceSent, req.params.id]
     );
     if (!rowCount) {
       await client.query('ROLLBACK');
@@ -157,18 +171,29 @@ router.post('/:id/move', async (req, res) => {
     const newStatus = ORDER_FLOW[newIdx];
     const packedIdx = ORDER_FLOW.indexOf('Packed');
 
+    // Things that should be done before this move. The person can cancel,
+    // move anyway (override 'force'), or have the order filled in to match
+    // and then move (override 'fix').
+    const blockers = [];
     if (direction > 0 && newStatus === 'Packed') {
-      const allPacked = items.every((it) => (it.qty_packed || 0) === it.qty);
-      if (!allPacked) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ error: 'Enter the packed quantity for every line before marking Packed' });
-      }
+      const short = items.filter((it) => (it.qty_packed || 0) < (it.qty || 0));
+      if (short.length) blockers.push({ code: 'packed', message: `${short.length} line${short.length === 1 ? ' is' : 's are'} not fully marked as packed`, fix: 'Mark everything as packed' });
     }
     if (direction > 0 && newStatus === 'Closed') {
-      const allShipped = items.every((it) => (it.qty_shipped || 0) === it.qty);
-      if (!allShipped) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ error: 'Enter the shipped quantity for every line before closing' });
+      const short = items.filter((it) => (it.qty_shipped || 0) < (it.qty || 0));
+      if (short.length) blockers.push({ code: 'shipped', message: `${short.length} line${short.length === 1 ? ' is' : 's are'} not fully marked as shipped`, fix: 'Mark everything as shipped' });
+      if (!order.invoice_sent) blockers.push({ code: 'invoice', message: 'The invoice is not marked as sent', fix: 'Tick Invoice sent' });
+    }
+    const override = req.body.override;
+    if (blockers.length && override !== 'force' && override !== 'fix') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: blockers.map((b) => b.message).join('; '), blockers });
+    }
+    if (blockers.length && override === 'fix') {
+      for (const b of blockers) {
+        if (b.code === 'packed') await client.query('UPDATE order_items SET qty_packed = qty WHERE order_id = $1', [req.params.id]);
+        if (b.code === 'shipped') await client.query('UPDATE order_items SET qty_shipped = qty WHERE order_id = $1', [req.params.id]);
+        if (b.code === 'invoice') await client.query('UPDATE orders SET invoice_sent = true, ready_to_invoice = false WHERE id = $1', [req.params.id]);
       }
     }
 
@@ -186,6 +211,10 @@ router.post('/:id/move', async (req, res) => {
     async function adjustStock(sign) {
       const deltas = new Map(); // componentId -> qty delta
       for (const it of items) {
+        if (it.stock_id) {
+          deltas.set(it.stock_id, (deltas.get(it.stock_id) || 0) + sign * (it.qty || 0));
+          continue;
+        }
         const comps = componentsByProduct.get(it.product_id) || [];
         for (const c of comps) {
           const delta = sign * (c.qty || 0) * it.qty;

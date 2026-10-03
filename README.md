@@ -172,6 +172,21 @@ as `statusHistory`. Orders also carry a `priority` (High/Medium/Low) and a
 `productionRank`, set by dragging on the Production page
 (`PUT /api/orders/production-order`).
 
+An order line is either a hamper (`productId`) or a single item
+(`stockId`, `kind: 'item'`); items are priced at their own price and VAT
+rate and deducted from stock directly. When a move is held up (marking
+Packed before every line is packed; Closed before every line is shipped or
+before Invoice sent is ticked) the move route returns 409 with `blockers`;
+the client then offers to cancel, move anyway (`override: 'force'`) or fill
+in what's missing and move (`override: 'fix'`). Ticking Invoice sent clears
+Ready to invoice.
+
+Ribbon colours live on the Colours page (`/api/colours`). Customers store
+the colour's name as text, or any typed text, and sample boxes resolve the
+name to the listed hex/RGB. Proposals have a status (Draft, Sent, Revision
+required, Declined, Accepted); creating an order from a proposal
+(`proposalId`) marks it Accepted.
+
 `POST /api/reports/orders` builds the Orders Excel report (orders, hamper
 lines and status history sheets) from the filters on the Reports page. Cost
 and profit columns are only included for admins.

@@ -24,7 +24,10 @@ async function apiRequest(method, path, body, reqOpts) {
   try { data = await res.json(); } catch (e) { /* no body */ }
   if (!res.ok) {
     if (res.status === 401 && !reqOpts.skipUnauthorizedHandler && onUnauthorized) onUnauthorized();
-    throw new Error((data && data.error) || `Request failed (${res.status})`);
+    const err = new Error((data && data.error) || `Request failed (${res.status})`);
+    err.status = res.status;
+    err.data = data;
+    throw err;
   }
   return data;
 }
@@ -91,6 +94,11 @@ const api = {
     update: (id, item) => apiRequest('PUT', `/api/shipping/${id}`, item),
     remove: (id) => apiRequest('DELETE', `/api/shipping/${id}`),
   },
+  colours: {
+    create: (item) => apiRequest('POST', '/api/colours', item),
+    update: (id, item) => apiRequest('PUT', `/api/colours/${id}`, item),
+    remove: (id) => apiRequest('DELETE', `/api/colours/${id}`),
+  },
   sources: {
     create: (item) => apiRequest('POST', '/api/sources', item),
     update: (id, item) => apiRequest('PUT', `/api/sources/${id}`, item),
@@ -111,7 +119,7 @@ const api = {
     create: (item) => apiRequest('POST', '/api/orders', item),
     update: (id, item) => apiRequest('PUT', `/api/orders/${id}`, item),
     remove: (id) => apiRequest('DELETE', `/api/orders/${id}`),
-    move: (id, direction) => apiRequest('POST', `/api/orders/${id}/move`, { direction }),
+    move: (id, direction, override) => apiRequest('POST', `/api/orders/${id}/move`, { direction, override }),
     productionOrder: (orders) => apiRequest('PUT', '/api/orders/production-order', { orders }),
   },
   proposals: {

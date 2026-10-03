@@ -70,6 +70,8 @@ router.delete('/:id', async (req, res) => {
     // A hamper recipe line referencing this item no longer makes sense once
     // the item itself is gone, so drop the line rather than leave a dangling FK.
     await client.query('DELETE FROM product_components WHERE component_id = $1', [req.params.id]);
+    // Orders keep the line (as an unknown item) so their history stays intact.
+    await client.query('UPDATE order_items SET stock_id = NULL WHERE stock_id = $1', [req.params.id]);
     await client.query('DELETE FROM stock_items WHERE id = $1', [req.params.id]);
     await client.query('COMMIT');
   } catch (err) {

@@ -73,3 +73,25 @@ export function computeHamperTotals(product, stockById, packagingById, shippingB
   const totalIncVat = vatBreakdown.reduce((sum, v) => sum + v.totalIncVat, 0);
   return { cost, costExVat, priceExVat, vatBreakdown, totalIncVat, profit: priceExVat - costExVat };
 }
+
+// A single item sold on its own: its price (inc VAT) at its VAT rate.
+export function computeItemTotals(stockItem) {
+  const rate = stockItem.vat || 'Standard 20%';
+  const price = stockItem.price || 0;
+  const cost = stockItem.cost || 0;
+  const line = breakdownLine(rate, price, { calculated: price, overridden: false });
+  return { cost, costExVat: exVat(cost, rate), priceExVat: line.subtotal, vatBreakdown: [line], totalIncVat: price, profit: line.subtotal - exVat(cost, rate) };
+}
+
+// One order line (a hamper or an item) priced for a single unit, with its
+// display name; null when the hamper or item no longer exists.
+export function computeOrderLineUnit(line, maps) {
+  if (line.stockId) {
+    const s = maps.stockById.get(line.stockId);
+    if (!s) return null;
+    return { name: s.itemName || 'Unnamed item', isItem: true, totals: computeItemTotals(s) };
+  }
+  const p = line.productId ? maps.productById.get(line.productId) : null;
+  if (!p) return null;
+  return { name: p.name, isItem: false, totals: computeHamperTotals(p, maps.stockById, maps.packagingById, maps.shippingById) };
+}

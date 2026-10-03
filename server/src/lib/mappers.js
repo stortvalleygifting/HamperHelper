@@ -117,8 +117,11 @@ export function orderToApi(row, items, history) {
     invoiceSent: !!row.invoice_sent,
     stockDeducted: row.stock_deducted,
     invoiceNumber: row.invoice_number,
+    proposalId: row.proposal_id || null,
     items: items.map((it) => ({
+      kind: it.stock_id ? 'item' : 'hamper',
       productId: it.product_id,
+      stockId: it.stock_id || null,
       qty: it.qty,
       qtyPacked: it.qty_packed ?? 0,
       qtyShipped: it.qty_shipped ?? 0,
@@ -139,9 +142,14 @@ export function proposalToApi(row, hampers) {
     id: row.id,
     customerId: row.customer_id,
     proposalDate: row.proposal_date,
+    status: row.status || 'Draft',
     hamperIds,
     docName: row.doc_name || '',
     docSource: row.doc_source || '',
     docUrl: row.doc_url || '',
   };
+}
+
+export function colourToApi(row) {
+  return { id: row.id, name: row.name, hex: row.hex || '', rgb: row.rgb || '', pantone: row.pantone || '' };
 }

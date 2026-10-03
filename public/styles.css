@@ -208,3 +208,20 @@
   .photoThumb button{position:absolute;top:-6px;right:-6px;padding:1px 6px;border-radius:50%;}
   .overrideTable input{width:100px;padding:5px 8px;}
   .overrideTable input::placeholder{color:var(--text-muted);font-style:italic;}
+  /* Colours */
+  .colourSwatch.empty{background:repeating-linear-gradient(45deg,#fff,#fff 3px,#eee 3px,#eee 6px);}
+  .colourChoice{display:flex;align-items:center;gap:8px;}
+  .colourChoice .colourSwatch{border-radius:6px;}
+  input[type=color].colourPick{width:44px;height:30px;padding:2px;cursor:pointer;}
+  /* Order lines that are single items, not hampers */
+  .lineKind{flex:none;font-size:11px;font-weight:500;padding:3px 8px;border-radius:99px;background:var(--kraft);color:var(--ink-soft);}
+  /* Status change held up */
+  .blockerList{margin:0 0 12px;padding-left:18px;font-size:13.5px;line-height:1.6;color:var(--text);}
+  /* Hamper price card: hamper, shipping and total side by side */
+  .priceSplit{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;align-items:end;}
+  /* Proposal status */
+  .badge.draft{background:#EFEEE8;color:var(--text-secondary);}
+  .badge.sent{background:#DCEAF7;color:#2E5F8A;}
+  .badge.revision-required{background:var(--gold-light);color:var(--gold);}
+  .badge.declined{background:var(--berry-light);color:var(--berry);}
+  .badge.accepted{background:var(--green-light);color:var(--green);}

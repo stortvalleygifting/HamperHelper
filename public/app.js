@@ -1,4 +1,4 @@
-const State = { tab:'dashboard', products:[], stock:[], orders:[], customers:[], packaging:[], sources:[], shipping:[], proposals:[], staff:[], me:null, loaded:false, hideHamperCosts:false };
+const State = { tab:'dashboard', products:[], stock:[], orders:[], customers:[], packaging:[], sources:[], shipping:[], proposals:[], staff:[], colours:[], me:null, loaded:false, hideHamperCosts:false };
 try{ State.hideHamperCosts = localStorage.getItem('hh.hideHamperCosts') === '1'; }catch(e){ /* storage unavailable */ }
 
 const ITEM_CATEGORIES = ['Alcohol Free','Beer','Cider','Coffee','Gin','Rum','Tea','Vodka','Whisky','Wine','Charcuterie','Snacks','Jam, Chutney & Preserves','Marinade','Mayonnaise','Oil','Pasta','Pudding','Rubs','Salad Dressing','Sauce','Biscuits and Cake Bars','Chocolate','Fudge','Nuts','Savoury Snacks','Sweets'];
@@ -11,6 +11,7 @@ const REPORTS = [
 ];
 
 const PRIORITIES = ['High','Medium','Low'];
+const PROPOSAL_STATUSES = ['Draft','Sent','Revision required','Declined','Accepted'];
 function priorityRank(p){ const i = PRIORITIES.indexOf(p); return i<0 ? 1 : i; }
 function priorityBadge(p){ p = PRIORITIES.includes(p) ? p : 'Medium'; return `<span class="badge prio-${p.toLowerCase()}">${p} priority</span>`; }
 function escHtml(s){ return String(s==null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -151,6 +152,7 @@ async function loadAll(){
     State.shipping = data.shipping;
     State.sources = data.sources;
     State.proposals = data.proposals;
+    State.colours = data.colours || [];
     State.staff = staff;
     State.loaded = true;
   }catch(e){
@@ -159,7 +161,7 @@ async function loadAll(){
   }
 }
 
-const TABS = ['dashboard','proposals','orders','production','products','stock','customers','packaging','shipping','sources','reports','staff'];
+const TABS = ['dashboard','proposals','orders','production','products','stock','customers','colours','packaging','shipping','sources','reports','staff'];
 // The address bar carries the current screen (#orders), so a second tab or a
 // refresh opens where you were. #orders/order/<id> also opens that record.
 function setTab(tab){ State.tab = tab; syncHash(); render(); }
@@ -189,6 +191,10 @@ function computeOpenRequirements(){
   const req = {}; // componentId -> qty needed
   State.orders.filter(o=> PRODUCTION_STATUSES.includes(o.status)).forEach(o=>{
     o.items.forEach(it=>{
+      if(isItemLine(it)){
+        if(it.stockId) req[it.stockId] = (req[it.stockId]||0) + (it.qty||0);
+        return;
+      }
       const prod = productById(it.productId);
       if(!prod) return;
       prod.components.forEach(c=>{
@@ -211,6 +217,7 @@ function render(){
       ${navItem('products','Hampers')}
       ${navItem('stock','Items')}
       ${navItem('customers','Customers')}
+      ${navItem('colours','Colours')}
       ${navItem('packaging','Packaging')}
       ${navItem('shipping','Shipping')}
       ${navItem('sources','Sources')}
@@ -237,6 +244,7 @@ function render(){
   if(State.tab==='products') main.innerHTML = renderProducts();
   if(State.tab==='stock') main.innerHTML = renderStock();
   if(State.tab==='customers') main.innerHTML = renderCustomers();
+  if(State.tab==='colours') main.innerHTML = renderColours();
   if(State.tab==='packaging') main.innerHTML = renderPackaging();
   if(State.tab==='shipping') main.innerHTML = renderShipping();
   if(State.tab==='sources') main.innerHTML = renderSources();
@@ -289,6 +297,115 @@ function navItem(tab,label){
   return `<div class="navitem ${State.tab===tab?'active':''}" data-tab="${tab}"><span class="navdot"></span>${label}</div>`;
 }
 
+// ---------- Colours ----------
+// Customers store a ribbon colour as text: usually the name of a colour from
+// the Colours page, or anything typed in. colourCss turns that into something
+// a sample box can show (the listed colour's hex or RGB, or the text itself
+// if it's already a colour the browser understands, like #3F6B3F or navy).
+function colourByName(v){
+  const key = String(v||'').trim().toLowerCase();
+  return key ? State.colours.find(c=>c.name.trim().toLowerCase()===key) : null;
+}
+function normaliseHex(h){
+  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(h||'').trim());
+  if(!m) return '';
+  const x = m[1].length===3 ? m[1].split('').map(ch=>ch+ch).join('') : m[1];
+  return '#' + x.toUpperCase();
+}
+function rgbFromText(t){
+  const nums = String(t||'').match(/\d+(\.\d+)?/g);
+  if(!nums || nums.length < 3) return null;
+  const [r,g,b] = nums.slice(0,3).map(n=>Math.max(0, Math.min(255, Math.round(Number(n)))));
+  return { r, g, b };
+}
+function hexToRgbText(hex){
+  const h = normaliseHex(hex);
+  if(!h) return '';
+  return [1,3,5].map(i=>parseInt(h.slice(i,i+2),16)).join(', ');
+}
+function rgbTextToHex(t){
+  const c = rgbFromText(t);
+  return c ? '#' + [c.r,c.g,c.b].map(n=>n.toString(16).padStart(2,'0')).join('').toUpperCase() : '';
+}
+function colourCss(v){
+  if(!v) return '';
+  const c = colourByName(v);
+  if(c) return normaliseHex(c.hex) || rgbTextToHex(c.rgb) || '';
+  const hex = normaliseHex(v);
+  if(hex) return hex;
+  return (window.CSS && CSS.supports && CSS.supports('color', String(v).trim())) ? String(v).trim() : '';
+}
+function colourSwatch(v, size){
+  const css = colourCss(v);
+  size = size || 14;
+  return `<span class="colourSwatch${css ? '' : ' empty'}" style="width:${size}px;height:${size}px;${css ? `background:${css};` : ''}" title="${escHtml(v||'No colour')}"></span>`;
+}
+
+function renderColours(){
+  const rows = State.colours.slice().sort((a,b)=> a.name.localeCompare(b.name));
+  return `
+    <div class="row-between">
+      <div><h1>Colours</h1><p class="subtitle">Ribbon colours you stock. Customers pick their ribbon colour from this list.</p></div>
+      <button class="primary" id="newColourBtn">Add colour</button>
+    </div>
+    <div class="panel">
+      ${rows.length ? hscroll(`<table><thead><tr><th>Colour</th><th>Name</th><th>Hex</th><th>RGB</th><th>Pantone</th><th></th></tr></thead><tbody>
+        ${rows.map(c=>`<tr class="clickrow" data-rowkind="colour" data-rowid="${c.id}">
+          <td><input type="color" class="colourPick" data-colourpick="${c.id}" value="${normaliseHex(c.hex) || rgbTextToHex(c.rgb) || '#ffffff'}" title="Pick a colour"></td>
+          <td><strong>${escHtml(c.name)}</strong></td>
+          <td class="mono">${escHtml(c.hex) || '—'}</td>
+          <td class="mono">${escHtml(c.rgb) || '—'}</td>
+          <td>${escHtml(c.pantone) || '—'}</td>
+          <td style="white-space:nowrap;">
+            <button class="small ghost" data-editcolour="${c.id}">Edit</button>
+            <button class="small danger" data-delcolour="${c.id}">Delete</button>
+          </td>
+        </tr>`).join('')}
+      </tbody></table>`) : `<div class="empty">No colours yet. Add the ribbon colours you use.</div>`}
+    </div>
+  `;
+}
+
+function openColourModal(existing){
+  if(existing) noteModalRef('colour', existing.id);
+  const c = existing ? Object.assign({}, existing) : { id:null, name:'', hex:'', rgb:'', pantone:'' };
+  document.getElementById('modalRoot').innerHTML = `
+    <div class="modal-overlay" id="ovl">
+      <div class="modal">
+        <h3>${existing? 'Edit colour':'Add colour'}</h3>
+        <div class="field"><label>Name</label><input id="f_cname" value="${escHtml(c.name)}" placeholder="e.g. Forest Green"></div>
+        <div class="field">
+          <label>Colour picker</label>
+          <div class="colorRow"><input type="color" id="f_cpick" value="${normaliseHex(c.hex) || rgbTextToHex(c.rgb) || '#ffffff'}"><span class="savehint" style="margin:0;">Picking a colour fills in the hex and RGB.</span></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>Hex</label><input id="f_chex" value="${escHtml(c.hex)}" placeholder="#3F6B3F"></div>
+          <div class="field"><label>RGB</label><input id="f_crgb" value="${escHtml(c.rgb)}" placeholder="63, 107, 63"></div>
+        </div>
+        <div class="field"><label>Pantone</label><input id="f_cpantone" value="${escHtml(c.pantone)}" placeholder="e.g. 7734 C"></div>
+        <div class="row-between" style="margin-top:16px;">
+          <button class="ghost" id="cancelBtn">Cancel</button>
+          <button class="primary" id="saveBtn">Save</button>
+        </div>
+      </div>
+    </div>`;
+  const pick = document.getElementById('f_cpick'), hex = document.getElementById('f_chex'), rgb = document.getElementById('f_crgb');
+  pick.oninput = ()=>{ hex.value = pick.value.toUpperCase(); rgb.value = hexToRgbText(pick.value); };
+  hex.oninput = ()=>{ const h = normaliseHex(hex.value); if(h){ pick.value = h; rgb.value = hexToRgbText(h); } };
+  rgb.oninput = ()=>{ const h = rgbTextToHex(rgb.value); if(h){ pick.value = h; hex.value = h; } };
+  document.getElementById('cancelBtn').onclick = closeModal;
+  document.getElementById('saveBtn').onclick = async ()=>{
+    const body = { name: document.getElementById('f_cname').value.trim(), hex: normaliseHex(hex.value) || hex.value.trim(), rgb: rgb.value.trim(), pantone: document.getElementById('f_cpantone').value.trim() };
+    if(!body.name){ showToast('Give the colour a name'); return; }
+    const clash = State.colours.find(x=> x.id!==c.id && x.name.trim().toLowerCase()===body.name.toLowerCase());
+    if(clash){ showToast('There is already a colour with that name'); return; }
+    try{
+      State.colours = existing ? await api.colours.update(c.id, body) : await api.colours.create(body);
+      closeModal(); render(); showToast('Colour saved');
+    }catch(e){ showToast(e.message || 'Could not save colour'); }
+  };
+}
+
 function statusBadge(status){
   const cls = (status||'').toLowerCase().replace(/\s+/g,'-');
   return `<span class="badge ${cls}">${status}</span>`;
@@ -328,13 +445,10 @@ function renderDashboard(){
 
 function orderCard(o, compact, opts){
   opts = opts || {};
-  const prod = o.items.map(it=>{
-    const p = productById(it.productId);
-    return `${it.qty} × ${p? p.name : 'Unknown hamper'}`;
-  }).join(', ');
+  const prod = o.items.map(orderLineLabel).join(', ');
   const cust = customerById(o.customerId);
   const custLabel = cust ? customerLabel(cust) : 'Unknown customer';
-  const swatch = cust && cust.ribbonColor ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${cust.ribbonColor};margin-right:6px;vertical-align:middle;"></span>` : '';
+  const swatch = cust && colourCss(cust.ribbonColor) ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${colourCss(cust.ribbonColor)};margin-right:6px;vertical-align:middle;"></span>` : '';
   const nextLabel = FORWARD_LABELS[o.status];
   const backLabel = BACKWARD_LABELS[o.status];
   const totals = computeOrderTotals(o);
@@ -371,12 +485,14 @@ function proposalCard(pr){
       <div class="orow">
         <div>
           <div class="oname">${customerLink(cust, custLabel)} <span class="mono">#${pr.id.slice(-5)}</span></div>
+          <div style="margin:4px 0 2px;">${statusBadge(pr.status || 'Draft')}${State.orders.some(o=>o.proposalId===pr.id) ? ' <span class="badge invoice">Order created</span>' : ''}</div>
           <div class="ometa">${pr.proposalDate? 'Proposed: '+pr.proposalDate : ''}</div>
           <div class="ometa">${hampers.length? hampers.join(', ') : 'No hamper options chosen yet'}</div>
           ${pr.docName ? `<div class="ometa">Document: ${pr.docName} (${pr.docSource==='uploaded'?'uploaded':'generated'})</div>` : ''}
         </div>
         <div class="oactions" style="flex-wrap:wrap;justify-content:flex-end;max-width:260px;">
           <button class="small ghost" data-editproposal="${pr.id}">Edit</button>
+          <button class="small primary" data-convertproposal="${pr.id}">Convert to order</button>
           <button class="small primary" data-generateproposal="${pr.id}">Generate document</button>
           <button class="small ghost" data-uploadproposal="${pr.id}">Upload edited document</button>
           ${pr.docUrl ? `<button class="small ghost" data-downloadproposal="${pr.id}">Download document</button>` : ''}
@@ -1059,14 +1175,37 @@ function computeHamperTotals(p){
   return { cost, costExVat, priceExVat, weight, vatBreakdown, totalIncVat, profit, packaging: pack, shipping: ship };
 }
 
+// A single item sold on its own: its price (inc VAT) at its VAT rate.
+function computeItemTotals(st){
+  const rate = st.vat || 'Standard 20%';
+  const price = st.price||0, cost = st.cost||0;
+  const line = breakdownLine(rate, price, { calculated: price, overridden:false });
+  return { cost, costExVat: exVat(cost, rate), priceExVat: line.subtotal, vatBreakdown:[line], totalIncVat: price, profit: line.subtotal - exVat(cost, rate) };
+}
+function isItemLine(it){ return it.kind==='item'; }
+// The name and the price of ONE of an order line (a hamper or an item), or
+// null if that hamper or item no longer exists.
+function orderLineUnit(it){
+  if(isItemLine(it)){
+    const st = it.stockId ? stockById(it.stockId) : null;
+    return st ? { name: itemSearchLabel(st), isItem:true, totals: computeItemTotals(st) } : null;
+  }
+  const p = productById(it.productId);
+  return p ? { name: p.name, isItem:false, product:p, totals: computeHamperTotals(p) } : null;
+}
+function orderLineLabel(it){
+  const u = orderLineUnit(it);
+  return `${it.qty} × ${u ? u.name : isItemLine(it) ? 'Unknown item' : 'Unknown hamper'}`;
+}
+
 function computeOrderTotals(o){
   let cost = 0, costExVat = 0;
   const groups = {}; // goods per VAT rate, and shipping per VAT rate, kept apart
-  const lines = []; // one entry per hamper line, for the per-hamper price summary
+  const lines = []; // one entry per line, priced for ONE hamper or item
   o.items.forEach(it=>{
-    const p = productById(it.productId);
-    if(!p) return;
-    const ht = computeHamperTotals(p);
+    const unit = orderLineUnit(it);
+    if(!unit) return;
+    const ht = unit.totals;
     const qty = it.qty||0;
     cost += ht.cost*qty;
     costExVat += ht.costExVat*qty;
@@ -1074,9 +1213,7 @@ function computeOrderTotals(o){
       const key = (v.isShipping ? 'ship|' : 'goods|') + v.rate;
       groups[key] = (groups[key]||0) + v.totalIncVat*qty;
     });
-    lines.push({ product: p, qty, vatBreakdown: ht.vatBreakdown.map(v=>Object.assign({}, v, {
-      subtotal: v.subtotal*qty, vatAmount: v.vatAmount*qty, totalIncVat: v.totalIncVat*qty,
-    })) });
+    lines.push({ name: unit.name, isItem: unit.isItem, qty, vatBreakdown: ht.vatBreakdown });
   });
   const vatBreakdown = Object.entries(groups).map(([key, amount])=>{
     const [kind, rate] = [key.slice(0, key.indexOf('|')), key.slice(key.indexOf('|')+1)];
@@ -1465,12 +1602,12 @@ function renderCustomers(){
           ).join('')}
         </tr></thead><tbody>
         ${rows.length ? rows.map(c=>`<tr class="clickrow" data-rowkind="customer" data-rowid="${c.id}">
-          <td>${c.logoUrl? `<img src="${c.logoUrl}" class="logoThumb">` : `<div class="logoThumb" style="background:${c.ribbonColor||'#E7DCC4'};"></div>`}</td>
+          <td>${c.logoUrl? `<img src="${c.logoUrl}" class="logoThumb">` : `<div class="logoThumb" style="background:${colourCss(c.ribbonColor)||'#E7DCC4'};"></div>`}</td>
           <td><strong>${customerLink(c, c.companyName)}</strong></td>
           <td>${c.contactName||'—'}</td>
           <td>${c.email||'—'}</td>
           <td>${c.phonePrimary||'—'}${c.phoneSecondary? ` / ${c.phoneSecondary}` : ''}</td>
-          <td><span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:14px;height:14px;border-radius:4px;background:${c.ribbonColor||'#E7DCC4'};display:inline-block;border:0.5px solid var(--border);"></span>${c.ribbonColor||'—'}</span></td>
+          <td><span style="display:inline-flex;align-items:center;gap:6px;">${colourSwatch(c.ribbonColor)}${escHtml(c.ribbonColor)||'—'}</span></td>
           <td>${c.sourceLabel||'—'}</td>
           <td>${c.orderCount ? `<button class="linkbtn" data-vieworders="${c.id}">${c.orderCount}</button>` : '0'}</td>
           <td>${fmtMoney(c.totalValue)}</td>
@@ -1693,8 +1830,8 @@ function openPackagingModal(existing){
         <h3>${existing? 'Edit packaging':'Add packaging'}</h3>
         <div class="field"><label>Size</label><input id="f_size" value="${p.size}" placeholder="e.g. Medium (Shipped)"></div>
         <div class="grid2">
-          <div class="field"><label>Price (£, inc VAT)</label><input id="f_price" type="number" step="0.01" value="${p.price}"></div>
-          ${canSeeCosts() ? `<div class="field"><label>Cost (£, inc VAT)</label><input id="f_cost" type="number" step="0.01" value="${p.cost ?? ''}"></div>` : ''}
+          <div class="field"><label>Price (£, inc VAT)</label><input id="f_price" type="number" step="any" value="${p.price}"></div>
+          ${canSeeCosts() ? `<div class="field"><label>Cost (£, inc VAT)</label><input id="f_cost" type="number" step="any" value="${p.cost ?? ''}"></div>` : ''}
         </div>
         <div class="grid2">
           <div class="field"><label>Weight (kg)</label><input id="f_weight" type="number" step="0.001" value="${p.weight ?? ''}"></div>
@@ -1741,8 +1878,8 @@ function openShippingModal(existing){
         <h3>${existing? 'Edit shipping':'Add shipping'}</h3>
         <div class="field"><label>Label</label><input id="f_label" value="${p.label}" placeholder="e.g. Medium (Shipped)"></div>
         <div class="grid2">
-          <div class="field"><label>Price (£, inc VAT)</label><input id="f_price" type="number" step="0.01" value="${p.price}"></div>
-          ${canSeeCosts() ? `<div class="field"><label>Cost (£, inc VAT)</label><input id="f_cost" type="number" step="0.01" value="${p.cost ?? ''}"></div>` : ''}
+          <div class="field"><label>Price (£, inc VAT)</label><input id="f_price" type="number" step="any" value="${p.price}"></div>
+          ${canSeeCosts() ? `<div class="field"><label>Cost (£, inc VAT)</label><input id="f_cost" type="number" step="any" value="${p.cost ?? ''}"></div>` : ''}
         </div>
         <div class="grid2">
           <div class="field">
@@ -1808,8 +1945,8 @@ function openStockModal(existing, copyFrom){
           </div>
         </div>
         <div class="grid2">
-          ${canSeeCosts() ? `<div class="field"><label>Cost (£, inc VAT)</label><input id="f_cost" type="number" step="0.01" value="${(s.cost||0).toFixed(2)}"></div>` : ''}
-          <div class="field"><label>Price (£, inc VAT)</label><input id="f_price" type="number" step="0.01" value="${(s.price||0).toFixed(2)}"></div>
+          ${canSeeCosts() ? `<div class="field"><label>Cost (£, inc VAT)</label><input id="f_cost" type="number" step="any" value="${(s.cost||0).toFixed(2)}"></div>` : ''}
+          <div class="field"><label>Price (£, inc VAT)</label><input id="f_price" type="number" step="any" value="${(s.price||0).toFixed(2)}"></div>
         </div>
         <div class="grid2">
           <div class="field"><label>Weight (g)</label><input id="f_weight" type="number" step="1" value="${s.weight!=null?s.weight:''}" placeholder="e.g. 227"></div>
@@ -1863,6 +2000,20 @@ function openStockModal(existing, copyFrom){
   };
 }
 
+async function copyText(text){
+  try{ await navigator.clipboard.writeText(text); return true; }
+  catch(e){
+    // Older browsers, or the clipboard API unavailable: fall back to a hidden box.
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    let ok = false;
+    try{ ok = document.execCommand('copy'); }catch(err){ ok = false; }
+    ta.remove();
+    return ok;
+  }
+}
+
 function openProductModal(existing, duplicateFrom){
   if(existing) noteModalRef('product', existing.id);
   const p = existing ? JSON.parse(JSON.stringify(existing))
@@ -1887,7 +2038,7 @@ function openProductModal(existing, duplicateFrom){
     <div class="comprow">
       <input type="text" class="compNameInput" data-cidx="${i}" value="${val}" placeholder="Search item name or brand...">
       <input type="number" step="1" min="0" class="compQty" data-cidx="${i}" value="${c.qty}">
-      <input type="number" step="0.01" min="0" class="compPrice" data-cidx="${i}" value="${priceVal}">
+      <input type="number" step="any" min="0" class="compPrice" data-cidx="${i}" value="${priceVal}">
       <button class="small danger" data-removecomp="${i}">×</button>
     </div>`;
     }).join('')}`;
@@ -1910,16 +2061,20 @@ function openProductModal(existing, duplicateFrom){
     const totals = computeHamperTotals(p);
     const hideCosts = State.hideHamperCosts || !canSeeCosts();
     const anyOverride = totals.vatBreakdown.some(v=>v.overridden);
+    const shippingIncVat = totals.vatBreakdown.filter(v=>v.isShipping).reduce((sum,v)=>sum+v.totalIncVat, 0);
+    const goodsIncVat = totals.totalIncVat - shippingIncVat;
     return `
       <div class="panel" style="margin-top:14px;background:var(--paper);padding:14px 16px;">
         <div class="grid2">
           ${hideCosts ? '' : `<div><div class="ometa">Total cost (inc VAT)</div><div style="font-weight:500;font-size:15px;">${fmtMoney(totals.cost)}</div></div>`}
           <div><div class="ometa">Total weight</div><div style="font-weight:500;font-size:15px;">${totals.weight.toFixed(0)} g</div></div>
         </div>
-        <div class="grid2" style="margin-top:10px;">
+        <div class="priceSplit" style="margin-top:10px;">
+          <div><div class="ometa">Hamper price (inc VAT)</div><div style="font-weight:500;font-size:15px;">${fmtMoney(goodsIncVat)}</div></div>
+          <div><div class="ometa">Shipping price (inc VAT)</div><div style="font-weight:500;font-size:15px;">${totals.shipping || shippingIncVat ? fmtMoney(shippingIncVat) : 'No shipping'}</div></div>
           <div><div class="ometa">Total price (inc VAT)${anyOverride ? ' — overridden' : ''}</div><div style="font-weight:600;font-size:19px;">${fmtMoney(totals.totalIncVat)}</div></div>
-          ${hideCosts ? '' : `<div><div class="ometa">Profit (ex VAT)</div><div style="font-weight:600;font-size:19px;">${profitToggleHtml(totals.profit,'font-weight:600;font-size:19px;')}</div></div>`}
         </div>
+        ${hideCosts ? '' : `<div style="margin-top:10px;"><div class="ometa">Profit (ex VAT)</div><div style="font-weight:600;font-size:19px;">${profitToggleHtml(totals.profit,'font-weight:600;font-size:19px;')}</div></div>`}
         ${totals.vatBreakdown.length? `<table class="overrideTable" style="margin-top:10px;"><thead><tr><th>VAT rate</th><th>Ex VAT</th><th>VAT</th><th>Inc VAT</th><th>Override inc VAT (£)</th></tr></thead><tbody>
           ${totals.vatBreakdown.map(v=>`<tr>
             <td>${breakdownLabel(v)}</td><td>${fmtMoney(v.subtotal)}</td><td>${fmtMoney(v.vatAmount)}</td><td>${fmtMoney(v.totalIncVat)}</td>
@@ -1990,7 +2145,10 @@ function openProductModal(existing, duplicateFrom){
             <input id="f_photo" type="file" accept="image/*" multiple style="margin-top:8px;">
           </div>
           <div class="field"><label>Notes</label><textarea id="f_pnotes" rows="3">${escHtml(p.notes)}</textarea></div>
-          <label>Items</label>
+          <div class="row-between" style="margin:0 0 4px;">
+            <label style="margin:0;">Items</label>
+            ${p.components.length ? `<button class="linkbtn" id="copyItemsBtn" data-nodirty title="Copy each item and its quantity, ready to paste into an email or spreadsheet">Copy item list</button>` : ''}
+          </div>
           <div id="compList">${renderComps()}</div>
           ${State.stock.length? `<button class="linkbtn" id="addCompBtn">+ Add item</button>` : `<div class="savehint">Add items first, then come back to build this recipe.</div>`}
           <div id="hamperTotals">${totalsHtml()}</div>
@@ -2010,6 +2168,14 @@ function openProductModal(existing, duplicateFrom){
     wireOverrides();
     document.getElementById('f_name').oninput = (e)=>{ p.name = e.target.value; };
     document.getElementById('f_pnotes').oninput = (e)=>{ p.notes = e.target.value; };
+    const copyBtn = document.getElementById('copyItemsBtn');
+    if(copyBtn) copyBtn.onclick = async ()=>{
+      // Item and quantity only, tab separated so it pastes into two columns.
+      const rows = p.components.filter(c=>c.componentId).map(c=>{ const st = stockById(c.componentId); return `${st ? itemSearchLabel(st) : 'Unknown item'}\t${c.qty}`; });
+      if(!rows.length){ showToast('No items to copy yet'); return; }
+      const ok = await copyText(['Item\tQty', ...rows].join('\n'));
+      showToast(ok ? `Copied ${rows.length} item${rows.length===1?'':'s'}` : 'Could not copy. Your browser blocked the clipboard.');
+    };
     document.getElementById('f_packaging').onchange = (e)=>{ p.packagingId = e.target.value || null; refreshTotals(); };
     document.getElementById('f_shipping').onchange = (e)=>{ p.shippingId = e.target.value || null; refreshTotals(); };
     const wirePhotos = ()=>{
@@ -2138,7 +2304,7 @@ function openCustomerOrdersModal(customerId){
       <div class="modal" style="width:520px;">
         <h3>Orders — ${cust? customerLink(cust, cust.companyName) : 'Unknown customer'}</h3>
         ${custOrders.length ? custOrders.map(o=>{
-          const items = o.items.map(it=>{ const p = productById(it.productId); return `${it.qty} × ${p? p.name : 'Unknown hamper'}`; }).join(', ');
+          const items = o.items.map(orderLineLabel).join(', ');
           return `<div class="ordercard" style="cursor:pointer;" data-openorderfrommodal="${o.id}">
             <div class="orow">
               <div>
@@ -2197,7 +2363,18 @@ function openCustomerModal(existing, opts){
             <div class="field"><label>2nd secondary phone</label><input id="f_phone2_secondary" value="${c.phone2Secondary||''}"></div>
           </div>
           <div class="grid2">
-            <div class="field"><label>Ribbon colour</label><input id="f_ribbon" value="${c.ribbonColor||''}"></div>
+            <div class="field">
+              <label>Ribbon colour</label>
+              <div class="colourChoice">
+                <span id="ribbonSwatch">${colourSwatch(c.ribbonColor, 22)}</span>
+                <select id="f_ribbon_pick">
+                  <option value="">No ribbon colour</option>
+                  ${State.colours.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(col=>`<option value="${escHtml(col.name)}" ${colourByName(c.ribbonColor)===col?'selected':''}>${escHtml(col.name)}</option>`).join('')}
+                  <option value="__other" ${c.ribbonColor && !colourByName(c.ribbonColor) ? 'selected' : ''}>Other (type it in)</option>
+                </select>
+              </div>
+              <input id="f_ribbon" value="${escHtml(c.ribbonColor && !colourByName(c.ribbonColor) ? c.ribbonColor : '')}" placeholder="Type a colour name or hex" style="margin-top:6px;${c.ribbonColor && !colourByName(c.ribbonColor) ? '' : 'display:none;'}">
+            </div>
             <div class="field"><label>Font colour</label><input id="f_font" value="${c.fontColor||''}"></div>
           </div>
           <div class="field">
@@ -2215,6 +2392,15 @@ function openCustomerModal(existing, opts){
         </div>
       </div>`;
     document.getElementById('cancelBtn').onclick = ()=>{ if(opts.onCancel) opts.onCancel(); else closeModal(); };
+    const ribbonPick = document.getElementById('f_ribbon_pick'), ribbonText = document.getElementById('f_ribbon');
+    const ribbonValue = ()=> ribbonPick.value==='__other' ? ribbonText.value.trim() : ribbonPick.value;
+    const showRibbon = ()=>{ document.getElementById('ribbonSwatch').innerHTML = colourSwatch(ribbonValue(), 22); };
+    ribbonPick.onchange = ()=>{
+      ribbonText.style.display = ribbonPick.value==='__other' ? '' : 'none';
+      if(ribbonPick.value==='__other') ribbonText.focus();
+      showRibbon();
+    };
+    ribbonText.oninput = showRibbon;
     document.getElementById('f_logo').addEventListener('change', (e)=>{
       const file = e.target.files[0];
       if(!file) return;
@@ -2239,7 +2425,7 @@ function openCustomerModal(existing, opts){
       c.email2 = document.getElementById('f_email2').value.trim();
       c.phone2Primary = document.getElementById('f_phone2').value.trim();
       c.phone2Secondary = document.getElementById('f_phone2_secondary').value.trim();
-      c.ribbonColor = document.getElementById('f_ribbon').value.trim();
+      c.ribbonColor = ribbonValue();
       c.fontColor = document.getElementById('f_font').value.trim();
       c.notes = document.getElementById('f_notes').value.trim();
       try{
@@ -2260,7 +2446,8 @@ function openCustomerModal(existing, opts){
 function openProposalModal(existing){
   if(existing) noteModalRef('proposal', existing.id);
   const todayStr = new Date().toISOString().slice(0,10);
-  const pr = existing ? JSON.parse(JSON.stringify(existing)) : { id:null, customerId: null, proposalDate: todayStr, hamperIds: [], docUrl:'', docName:'', docSource:'' };
+  const pr = existing ? JSON.parse(JSON.stringify(existing)) : { id:null, customerId: null, proposalDate: todayStr, status:'Draft', hamperIds: [], docUrl:'', docName:'', docSource:'' };
+  if(!PROPOSAL_STATUSES.includes(pr.status)) pr.status = 'Draft';
   // normalize to exactly 10 slots (null = no selection)
   while(pr.hamperIds.length < 10) pr.hamperIds.push(null);
   pr.hamperIds = pr.hamperIds.slice(0,10);
@@ -2277,7 +2464,10 @@ function openProposalModal(existing){
               <input type="text" id="f_customer" value="${selectedCust? customerLabel(selectedCust).replace(/"/g,'&quot;') : ''}" placeholder="Select customer (type company or contact name)">` : `<div class="savehint">No customers yet — add one below.</div>`}
             <button class="linkbtn" id="addCustomerBtn" data-nodirty style="margin-top:4px;">+ Add new customer</button>
           </div>
-          <div class="field"><label>Proposal date</label><input id="f_propdate" type="date" value="${pr.proposalDate||''}"></div>
+          <div class="grid2">
+            <div class="field"><label>Proposal date</label><input id="f_propdate" type="date" value="${pr.proposalDate||''}"></div>
+            <div class="field"><label>Status</label><select id="f_propstatus">${PROPOSAL_STATUSES.map(st=>`<option value="${st}" ${st===pr.status?'selected':''}>${st}</option>`).join('')}</select></div>
+          </div>
           <label>Hamper options</label>
           <div style="margin-top:6px;">
             ${State.products.length? [0,1,2,3,4,5,6,7,8,9].map(i=>{
@@ -2314,6 +2504,7 @@ function openProposalModal(existing){
       });
     }
     document.getElementById('f_propdate').oninput = (e)=>{ pr.proposalDate = e.target.value; };
+    document.getElementById('f_propstatus').onchange = (e)=>{ pr.status = e.target.value; };
     document.querySelectorAll('.hamperSlot').forEach(sel=>{
       sel.onchange = (e)=>{ pr.hamperIds[parseInt(sel.dataset.slot)] = e.target.value || null; };
     });
@@ -2331,9 +2522,11 @@ function openProposalModal(existing){
   paint();
 }
 
-function openOrderModal(existing){
+// prefill (new orders only): starting values, e.g. from a proposal.
+function openOrderModal(existing, prefill){
   const todayStr = new Date().toISOString().slice(0,10);
-  const o = existing ? JSON.parse(JSON.stringify(existing)) : { id:null, customerId: null, orderDate: todayStr, deliveryDate:'', notes:'', status:'Proposal', priority:'Medium', readyToInvoice:false, invoiceSent:false, items:[], stockDeducted:false };
+  const o = existing ? JSON.parse(JSON.stringify(existing)) : Object.assign({ id:null, customerId: null, orderDate: todayStr, deliveryDate:'', notes:'', status:'Proposal', priority:'Medium', readyToInvoice:false, invoiceSent:false, items:[], stockDeducted:false, proposalId:null }, prefill || {});
+  o.items.forEach(it=>{ if(!it.kind) it.kind = it.stockId ? 'item' : 'hamper'; });
   if(!PRIORITIES.includes(o.priority)) o.priority = 'Medium';
   if(existing) noteModalRef('order', existing.id);
 
@@ -2357,8 +2550,25 @@ function openOrderModal(existing){
 
   function renderItems(){
     return `
-    <table style="margin-bottom:10px;"><thead><tr><th>Hamper</th><th>Ordered</th><th>Packed</th><th>Shipped</th><th></th></tr></thead><tbody>
+    <table style="margin-bottom:10px;"><thead><tr><th>Hamper or item</th><th>Ordered</th><th>Packed</th><th>Shipped</th><th></th></tr></thead><tbody>
     ${o.items.map((it,i)=>{
+      if(isItemLine(it)){
+        const st = it.stockId ? stockById(it.stockId) : null;
+        return `
+      <tr>
+        <td>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <span class="lineKind" title="A single item, not a hamper">Item</span>
+            <input type="text" class="itemLineSearch" data-iidx="${i}" value="${st ? escHtml(itemSearchLabel(st)) : ''}" placeholder="Search items...">
+          </div>
+          <div class="ometa" style="margin:4px 0 0 52px;">${st ? `Price each: ${fmtMoney(st.price)} (inc VAT)` : 'Pick an item from your Items list'}</div>
+        </td>
+        <td><input type="number" step="1" min="0" class="itemQty" data-iidx="${i}" value="${it.qty}" style="width:64px;"></td>
+        <td><input type="number" step="1" min="0" max="${it.qty}" class="itemPacked" data-iidx="${i}" value="${it.qtyPacked||0}" style="width:64px;"></td>
+        <td><input type="number" step="1" min="0" max="${it.qty}" class="itemShipped" data-iidx="${i}" value="${it.qtyShipped||0}" style="width:64px;"></td>
+        <td><button class="small danger" data-removeitem="${i}">×</button></td>
+      </tr>`;
+      }
       const p = productById(it.productId);
       const ship = p && p.shippingId ? State.shipping.find(sh=>sh.id===p.shippingId) : null;
       const open = expanded.has(i);
@@ -2387,12 +2597,14 @@ function openOrderModal(existing){
     const totals = computeOrderTotals(o);
     // One block of rows per hamper line (one row per VAT rate in it), then
     // the order's totals per VAT rate.
+    // Hamper and item rows are the price of one; the order total covers the
+    // full quantities.
     const lineRows = totals.lines.map(line=>line.vatBreakdown.map((v,vi)=>`<tr${vi===0?' class="groupStart"':''}>
-        ${vi===0 ? `<td rowspan="${line.vatBreakdown.length}">${line.qty} × ${line.product.name}</td>` : ''}
+        ${vi===0 ? `<td rowspan="${line.vatBreakdown.length}">${escHtml(line.name)}${line.isItem ? ' <span class="mono">(item)</span>' : ''}</td><td rowspan="${line.vatBreakdown.length}">${line.qty}</td>` : ''}
         <td>${breakdownLabel(v)}</td><td>${fmtMoney(v.subtotal)}</td><td>${fmtMoney(v.vatAmount)}</td><td>${fmtMoney(v.totalIncVat)}</td>
       </tr>`).join('')).join('');
     const totalRows = totals.vatBreakdown.map((v,vi)=>`<tr class="totalRow${vi===0?' groupStart':''}">
-        ${vi===0 ? `<td rowspan="${totals.vatBreakdown.length}">Order total</td>` : ''}
+        ${vi===0 ? `<td rowspan="${totals.vatBreakdown.length}" colspan="2">Order total</td>` : ''}
         <td>${breakdownLabel(v)}</td><td>${fmtMoney(v.subtotal)}</td><td>${fmtMoney(v.vatAmount)}</td><td>${fmtMoney(v.totalIncVat)}</td>
       </tr>`).join('');
     return `
@@ -2402,9 +2614,9 @@ function openOrderModal(existing){
           <div><div class="ometa">Total price (inc VAT)</div><div style="font-weight:600;font-size:15px;">${fmtMoney(totals.totalIncVat)}</div></div>
         </div>
         ${canSeeCosts() ? `<div style="margin-top:10px;"><div class="ometa">Profit (ex VAT)</div><div style="font-weight:600;font-size:19px;">${profitToggleHtml(totals.profit,'font-weight:600;font-size:19px;')}</div></div>` : ''}
-        ${totals.vatBreakdown.length? hscroll(`<table class="priceSummary" style="margin-top:10px;"><thead><tr><th>Hamper</th><th>VAT rate</th><th>Ex VAT</th><th>VAT</th><th>Inc VAT</th></tr></thead><tbody>
+        ${totals.vatBreakdown.length? hscroll(`<table class="priceSummary" style="margin-top:10px;"><thead><tr><th>Hamper or item</th><th>Qty</th><th>VAT rate</th><th>Ex VAT</th><th>VAT</th><th>Inc VAT</th></tr></thead><tbody>
           ${lineRows}${totalRows}
-        </tbody></table>`) : `<div class="savehint">Add hampers to see a price breakdown.</div>`}
+        </tbody></table>`) + `<div class="savehint" style="margin-top:6px;">Each hamper or item row is the price of one. The order total is for all of them.</div>` : `<div class="savehint">Add hampers or items to see a price breakdown.</div>`}
       </div>
     `;
   }
@@ -2418,7 +2630,7 @@ function openOrderModal(existing){
 
   function customerDetailsHtml(cust){
     if(!cust) return '';
-    const colour = (label, value)=> `<div><div class="ometa">${label}</div><div style="margin-top:2px;">${value || '—'}</div></div>`;
+    const colour = (label, value)=> `<div><div class="ometa">${label}</div><div style="margin-top:2px;display:flex;align-items:center;gap:6px;">${value ? colourSwatch(value) : ''}${escHtml(value) || '—'}</div></div>`;
     return `<div class="grid2" style="margin-bottom:12px;">${colour('Ribbon colour', cust.ribbonColor)}${colour('Font colour', cust.fontColor)}</div>`;
   }
 
@@ -2448,9 +2660,12 @@ function openOrderModal(existing){
           </div>
           ${selectedCust && selectedCust.notes ? `<div class="field"><label>Customer notes (from the customer record)</label><div class="customerNotes">${escHtml(selectedCust.notes)}</div></div>` : ''}
           <div class="field"><label>Order notes</label><textarea id="f_notes" rows="2">${escHtml(o.notes)}</textarea></div>
-          <label>Hampers ordered</label>
+          <label>Hampers and items ordered</label>
           <div id="itemList">${renderItems()}</div>
-          ${State.products.length? `<button class="linkbtn" id="addItemBtn">+ Add hamper</button>` : `<div class="savehint">Add a hamper recipe first.</div>`}
+          <div style="display:flex;gap:16px;">
+            ${State.products.length? `<button class="linkbtn" id="addItemBtn">+ Add hamper</button>` : ''}
+            ${State.stock.length? `<button class="linkbtn" id="addSingleItemBtn">+ Add item</button>` : ''}
+          </div>
           <div id="orderTotals">${orderTotalsHtml()}</div>
           <div class="field" style="margin-top:12px;">
             <div style="display:flex;gap:24px;flex-wrap:wrap;">
@@ -2484,8 +2699,16 @@ function openOrderModal(existing){
     document.getElementById('f_orderdate').oninput = (e)=>{ o.orderDate = e.target.value; };
     document.getElementById('f_date').oninput = (e)=>{ o.deliveryDate = e.target.value; };
     document.getElementById('f_notes').oninput = (e)=>{ o.notes = e.target.value; };
-    document.getElementById('f_invoice').onchange = (e)=>{ o.readyToInvoice = e.target.checked; };
-    document.getElementById('f_invoicesent').onchange = (e)=>{ o.invoiceSent = e.target.checked; };
+    document.getElementById('f_invoice').onchange = (e)=>{
+      o.readyToInvoice = e.target.checked;
+      // Ready to invoice again means the invoice hasn't gone yet.
+      if(o.readyToInvoice){ o.invoiceSent = false; document.getElementById('f_invoicesent').checked = false; }
+    };
+    document.getElementById('f_invoicesent').onchange = (e)=>{
+      o.invoiceSent = e.target.checked;
+      // Sent means it's no longer waiting to be invoiced.
+      if(o.invoiceSent){ o.readyToInvoice = false; document.getElementById('f_invoice').checked = false; }
+    };
     document.getElementById('f_priority').onchange = (e)=>{ o.priority = e.target.value; };
     document.getElementById('addCustomerBtn').onclick = ()=>{
       openCustomerModal(null, {
@@ -2502,10 +2725,26 @@ function openOrderModal(existing){
     }
     if(document.getElementById('addItemBtn')){
       document.getElementById('addItemBtn').onclick = ()=>{
-        o.items.push({ productId: State.products[0].id, qty: 1, qtyPacked: 0, qtyShipped: 0 });
+        o.items.push({ kind:'hamper', productId: State.products[0].id, stockId:null, qty: 1, qtyPacked: 0, qtyShipped: 0 });
         paint();
       };
     }
+    if(document.getElementById('addSingleItemBtn')){
+      document.getElementById('addSingleItemBtn').onclick = ()=>{
+        o.items.push({ kind:'item', productId:null, stockId:null, qty: 1, qtyPacked: 0, qtyShipped: 0 });
+        paint();
+        const inputs = document.querySelectorAll('.itemLineSearch');
+        if(inputs.length) inputs[inputs.length-1].focus();
+      };
+    }
+    document.querySelectorAll('.itemLineSearch').forEach(inp=>{
+      const idx = parseInt(inp.dataset.iidx);
+      attachSearchBox(inp, {
+        options: ()=> State.stock.map(st=>({ id: st.id, label: itemSearchLabel(st), text: st.category||'' })),
+        onPick: (id)=>{ if(o.items[idx].stockId!==id){ o.items[idx].stockId = id; paint(); } },
+        onNoMatch: ()=>{ if(o.items[idx].stockId){ o.items[idx].stockId = null; paint(); } },
+      });
+    });
     document.querySelectorAll('[data-removeitem]').forEach(b=>{
       b.onclick = ()=>{
         const idx = parseInt(b.dataset.removeitem);
@@ -2548,7 +2787,8 @@ function openOrderModal(existing){
     });
     document.getElementById('saveBtn').onclick = async ()=>{
       if(!o.customerId){ showToast('Choose or add a customer'); return; }
-      if(!o.items.length){ showToast('Add at least one hamper'); return; }
+      if(!o.items.length){ showToast('Add at least one hamper or item'); return; }
+      if(o.items.some(it=>isItemLine(it) && !it.stockId)){ showToast('Pick an item for every item line, or remove it'); return; }
       o.orderDate = document.getElementById('f_orderdate').value;
       o.deliveryDate = document.getElementById('f_date').value;
       o.notes = document.getElementById('f_notes').value.trim();
@@ -2557,7 +2797,11 @@ function openOrderModal(existing){
       o.priority = document.getElementById('f_priority').value;
       try{
         State.orders = existing ? await api.orders.update(o.id, o) : await api.orders.create(o);
-        closeModal(); render(); showToast('Order saved');
+        if(!existing && o.proposalId){
+          const pr = State.proposals.find(x=>x.id===o.proposalId);
+          if(pr) pr.status = 'Accepted';
+        }
+        closeModal(); render(); showToast(o.proposalId && !existing ? 'Order created from the proposal' : 'Order saved');
       }catch(e){ showToast(e.message || 'Could not save order'); }
     };
   }
@@ -2584,6 +2828,25 @@ function statusHistoryHtml(o){
   </div>`;
 }
 
+// Opens a new order filled in from a proposal: its customer and every hamper
+// on it, each with a quantity of 0 to fill in. Saving it marks the proposal
+// Accepted.
+function convertProposalToOrder(pr){
+  if(!pr) return;
+  const hamperIds = (pr.hamperIds||[]).filter(id=> id && productById(id));
+  if(!hamperIds.length){ showToast('This proposal has no hampers to put on an order'); return; }
+  const existingOrder = State.orders.find(o=>o.proposalId===pr.id);
+  const go = ()=> openOrderModal(null, {
+    customerId: pr.customerId,
+    proposalId: pr.id,
+    notes: '',
+    items: hamperIds.map(id=>({ kind:'hamper', productId:id, stockId:null, qty:0, qtyPacked:0, qtyShipped:0 })),
+  });
+  if(existingOrder){
+    openConfirmModal(`An order has already been made from this proposal (#${existingOrder.id.slice(-5)}). Make another one?`, go, { title:'Make another order?', confirmLabel:'Make another order', confirmClass:'primary' });
+  } else go();
+}
+
 function openRowEditor(kind, id){
   noteModalRef(kind, id);
   const find = (list)=> list.find(x=>x.id===id);
@@ -2595,6 +2858,7 @@ function openRowEditor(kind, id){
   if(kind==='packaging'){ const pk = find(State.packaging); if(pk) openPackagingModal(pk); }
   if(kind==='shipping'){ const sh = find(State.shipping); if(sh) openShippingModal(sh); }
   if(kind==='source'){ const src = find(State.sources); if(src) openSourceModal(src); }
+  if(kind==='colour'){ const col = find(State.colours); if(col) openColourModal(col); }
   if(kind==='staff'){ const st = find(State.staff); if(st) openStaffModal(st); }
 }
 
@@ -2676,6 +2940,9 @@ function attachHandlers(){
         render(); showToast('Proposal deleted');
       });
     };
+  });
+  document.querySelectorAll('[data-convertproposal]').forEach(b=>{
+    b.onclick = ()=> convertProposalToOrder(State.proposals.find(p=>p.id===b.dataset.convertproposal));
   });
   document.querySelectorAll('[data-generateproposal]').forEach(b=>{
     b.onclick = ()=>{
@@ -2786,6 +3053,31 @@ function attachHandlers(){
     };
   });
 
+  const newColourBtn = document.getElementById('newColourBtn');
+  if(newColourBtn) newColourBtn.onclick = ()=> openColourModal(null);
+  document.querySelectorAll('[data-editcolour]').forEach(b=>{
+    b.onclick = ()=> openColourModal(State.colours.find(c=>c.id===b.dataset.editcolour));
+  });
+  document.querySelectorAll('[data-delcolour]').forEach(b=>{
+    b.onclick = ()=>{
+      const col = State.colours.find(c=>c.id===b.dataset.delcolour);
+      openConfirmModal(`Delete the colour "${escHtml(col? col.name : '')}"? Customers using it keep the name as typed text.`, async ()=>{
+        State.colours = await api.colours.remove(b.dataset.delcolour);
+        render(); showToast('Colour deleted');
+      });
+    };
+  });
+  // The picker column saves straight away.
+  document.querySelectorAll('[data-colourpick]').forEach(inp=>{
+    inp.onchange = async ()=>{
+      const col = State.colours.find(c=>c.id===inp.dataset.colourpick);
+      if(!col) return;
+      try{
+        State.colours = await api.colours.update(col.id, Object.assign({}, col, { hex: inp.value.toUpperCase(), rgb: hexToRgbText(inp.value) }));
+        render(); showToast(`${col.name} updated`);
+      }catch(e){ showToast(e.message || 'Could not save colour'); }
+    };
+  });
   const newSourceBtn = document.getElementById('newSourceBtn');
   if(newSourceBtn) newSourceBtn.onclick = ()=> openSourceModal(null);
   document.querySelectorAll('[data-editsource]').forEach(b=>{
@@ -2959,20 +3251,50 @@ function attachHandlers(){
   });
 }
 
-async function moveOrderStatus(id, direction){
+async function moveOrderStatus(id, direction, override){
   // Validation, the stock deduction/restoration, and persistence all happen
   // together in one server-side transaction (see POST /api/orders/:id/move)
   // so a half-applied move can't leave stock and order status out of sync.
   try{
-    const result = await api.orders.move(id, direction);
+    const result = await api.orders.move(id, direction, override);
     State.orders = result.orders;
     State.stock = result.stock;
     render();
     const o = State.orders.find(x=>x.id===id);
     showToast(o ? `Order marked "${o.status}"` : 'Order updated');
   }catch(e){
+    if(e.status===409 && e.data && e.data.blockers){ openBlockedMoveDialog(id, direction, e.data.blockers); return; }
     showToast(e.message || 'Could not update order status');
   }
+}
+
+// Shown when a status change is held up by something not done yet: says
+// why, then cancel, change the status anyway, or fill in what's missing and
+// change it.
+function openBlockedMoveDialog(id, direction, blockers){
+  const o = State.orders.find(x=>x.id===id);
+  const target = o ? ORDER_FLOW[ORDER_FLOW.indexOf(o.status) + direction] : '';
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-overlay unsavedOverlay';
+  wrap.innerHTML = `
+    <div class="modal" style="width:440px;" role="alertdialog" aria-labelledby="blockedTitle">
+      <h3 id="blockedTitle">This order isn't ready to be ${escHtml(target.toLowerCase())}</h3>
+      <ul class="blockerList">${blockers.map(b=>`<li>${escHtml(b.message)}</li>`).join('')}</ul>
+      <div class="savehint" style="margin:0 0 14px;">"Update order and save" will: ${blockers.map(b=>escHtml(b.fix.charAt(0).toLowerCase() + b.fix.slice(1))).join(', and ')}.</div>
+      <div class="stackedActions">
+        <button class="primary" data-act="fix">Update order and save</button>
+        <button class="ghost" data-act="force">Save anyway</button>
+        <button class="ghost" data-act="cancel">Cancel</button>
+      </div>
+    </div>`;
+  const done = ()=>{ wrap.remove(); document.removeEventListener('keydown', onKey, true); };
+  const onKey = (e)=>{ if(e.key==='Escape'){ e.stopPropagation(); done(); } };
+  document.addEventListener('keydown', onKey, true);
+  wrap.querySelector('[data-act="fix"]').onclick = ()=>{ done(); moveOrderStatus(id, direction, 'fix'); };
+  wrap.querySelector('[data-act="force"]').onclick = ()=>{ done(); moveOrderStatus(id, direction, 'force'); };
+  wrap.querySelector('[data-act="cancel"]').onclick = done;
+  document.body.appendChild(wrap);
+  wrap.querySelector('[data-act="fix"]').focus();
 }
 
 // ---------- Auth ----------
@@ -3037,7 +3359,7 @@ let lastUserActivity = Date.now(), lastRefreshAt = Date.now(), refreshing = fals
 ['pointerdown','keydown','wheel','touchstart'].forEach(ev=> document.addEventListener(ev, ()=>{ lastUserActivity = Date.now(); }, { capture:true, passive:true }));
 
 function dataSignature(){
-  return JSON.stringify([State.products, State.stock, State.orders, State.customers, State.packaging, State.shipping, State.sources, State.proposals, State.staff]);
+  return JSON.stringify([State.products, State.stock, State.orders, State.customers, State.packaging, State.shipping, State.sources, State.proposals, State.staff, State.colours]);
 }
 
 async function refreshFromServer(){
@@ -3054,7 +3376,7 @@ async function refreshFromServer(){
     // Something may have opened or started while we waited.
     if(document.getElementById('modalRoot').innerHTML.trim() || State.dragging || !State.me) return;
     const before = dataSignature();
-    Object.assign(State, { products: data.products, stock: data.stock, orders: data.orders, customers: data.customers, packaging: data.packaging, shipping: data.shipping, sources: data.sources, proposals: data.proposals, staff });
+    Object.assign(State, { products: data.products, stock: data.stock, orders: data.orders, customers: data.customers, packaging: data.packaging, shipping: data.shipping, sources: data.sources, proposals: data.proposals, colours: data.colours || [], staff });
     if(dataSignature() !== before){
       const y = window.scrollY;
       render();
