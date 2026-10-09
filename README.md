@@ -173,6 +173,15 @@ document client-side (JSZip splices in the customer name and hamper photos)
 — it just fetches the template instead of decoding it from a JS constant —
 then uploads the result to be persisted.
 
+Each proposal has a name (new ones default to "Customer - DD/MM/YYYY") and
+an "Exclude shipping on proposal" tick box; when ticked, the document quotes
+each hamper's price without its shipping line. Once an order has been made
+from a proposal its Convert to order button goes away. The Proposals page
+filters by status and customer and searches name and customer.
+
+When a hamper goes on an order (added by hand or from a proposal), its own
+notes are added to the order notes as "Hamper name: notes".
+
 ## API shape
 
 Every mutating endpoint (`POST`/`PUT`/`DELETE`) responds with the full,

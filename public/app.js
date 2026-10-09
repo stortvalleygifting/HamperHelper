@@ -294,6 +294,16 @@ function renderOrdersOnly(){
   if(newSearchEl){ newSearchEl.focus(); if(caret!=null) newSearchEl.setSelectionRange(caret, caret); }
 }
 
+function renderProposalsOnly(){
+  const main = document.getElementById('main');
+  const searchEl = document.getElementById('proposalSearch');
+  const caret = searchEl ? searchEl.selectionStart : null;
+  main.innerHTML = renderProposals();
+  attachHandlers();
+  const newSearchEl = document.getElementById('proposalSearch');
+  if(newSearchEl){ newSearchEl.focus(); if(caret!=null) newSearchEl.setSelectionRange(caret, caret); }
+}
+
 function navItem(tab,label){
   return `<div class="navitem ${State.tab===tab?'active':''}" data-tab="${tab}"><span class="navdot"></span>${label}</div>`;
 }
@@ -477,23 +487,34 @@ function orderCard(o, compact, opts){
   `;
 }
 
+// "Customer - DD/MM/YYYY", the name a new proposal starts with.
+function defaultProposalName(customerId, isoDate){
+  const cust = customerById(customerId);
+  const [y,m,d] = (isoDate || new Date().toISOString().slice(0,10)).split('-');
+  return `${cust ? cust.companyName : 'Proposal'} - ${d}/${m}/${y}`;
+}
+function proposalName(pr){ return pr.name || defaultProposalName(pr.customerId, pr.proposalDate); }
+function proposalHasOrder(pr){ return State.orders.some(o=>o.proposalId===pr.id); }
+
 function proposalCard(pr){
   const cust = customerById(pr.customerId);
   const custLabel = cust ? customerLabel(cust) : 'Unknown customer';
   const hampers = (pr.hamperIds||[]).map(id=>{ const p = productById(id); return p? p.name : null; }).filter(Boolean);
+  const hasOrder = proposalHasOrder(pr);
   return `
     <div class="ordercard clickrow" data-rowkind="proposal" data-rowid="${pr.id}">
       <div class="orow">
         <div>
-          <div class="oname">${customerLink(cust, custLabel)} <span class="mono">#${pr.id.slice(-5)}</span></div>
-          <div style="margin:4px 0 2px;">${statusBadge(pr.status || 'Draft')}${State.orders.some(o=>o.proposalId===pr.id) ? ' <span class="badge invoice">Order created</span>' : ''}</div>
-          <div class="ometa">${pr.proposalDate? 'Proposed: '+pr.proposalDate : ''}</div>
+          <div class="oname">${escHtml(proposalName(pr))} <span class="mono">#${pr.id.slice(-5)}</span></div>
+          <div class="ometa">${customerLink(cust, custLabel)}</div>
+          <div style="margin:4px 0 2px;">${statusBadge(pr.status || 'Draft')}${hasOrder ? ' <span class="badge invoice">Order created</span>' : ''}</div>
+          <div class="ometa">${pr.proposalDate? 'Proposed: '+pr.proposalDate : ''}${pr.excludeShipping ? ' · Shipping left off the document' : ''}</div>
           <div class="ometa">${hampers.length? hampers.join(', ') : 'No hamper options chosen yet'}</div>
           ${pr.docName ? `<div class="ometa">Document: ${pr.docName} (${pr.docSource==='uploaded'?'uploaded':'generated'})</div>` : ''}
         </div>
         <div class="oactions" style="flex-wrap:wrap;justify-content:flex-end;max-width:260px;">
           <button class="small ghost" data-editproposal="${pr.id}">Edit</button>
-          <button class="small primary" data-convertproposal="${pr.id}">Convert to order</button>
+          ${hasOrder ? '' : `<button class="small primary" data-convertproposal="${pr.id}">Convert to order</button>`}
           <button class="small primary" data-generateproposal="${pr.id}">Generate document</button>
           <button class="small ghost" data-uploadproposal="${pr.id}">Upload edited document</button>
           ${pr.docUrl ? `<button class="small ghost" data-downloadproposal="${pr.id}">Download document</button>` : ''}
@@ -504,13 +525,47 @@ function proposalCard(pr){
   `;
 }
 
+function getFilteredProposals(){
+  const f = State.proposalFilter;
+  let rows = State.proposals.slice().reverse();
+  if(f.search){
+    const q = f.search.toLowerCase();
+    rows = rows.filter(pr=>{
+      const cust = customerById(pr.customerId);
+      return proposalName(pr).toLowerCase().includes(q) || (cust ? customerLabel(cust).toLowerCase() : '').includes(q);
+    });
+  }
+  if(f.status) rows = rows.filter(pr=>(pr.status||'Draft')===f.status);
+  if(f.customerId) rows = rows.filter(pr=>pr.customerId===f.customerId);
+  return rows;
+}
+
 function renderProposals(){
+  if(!State.proposalFilter) State.proposalFilter = { search:'', status:'', customerId:'' };
+  const f = State.proposalFilter;
+  const custIds = new Set(State.proposals.map(pr=>pr.customerId).filter(Boolean));
+  const custs = State.customers.filter(c=>custIds.has(c.id)).sort((a,b)=>customerLabel(a).localeCompare(customerLabel(b)));
+  const rows = getFilteredProposals();
   return `
     <div class="row-between">
       <div><h1>Proposals</h1><p class="subtitle">Draft gift package proposals for prospective customers.</p></div>
       <button class="primary" id="newProposalBtn">Add proposal</button>
     </div>
-    ${State.proposals.length? State.proposals.slice().reverse().map(pr=>proposalCard(pr)).join('') : `<div class="panel empty">No proposals yet. Click "Add proposal" to create the first one.</div>`}
+    <div class="panel">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        <input id="proposalSearch" placeholder="Search name or customer..." value="${escHtml(f.search)}" style="max-width:240px;">
+        <select id="proposalStatusFilter" style="max-width:180px;">
+          <option value="">All statuses</option>
+          ${PROPOSAL_STATUSES.map(st=>`<option value="${st}" ${f.status===st?'selected':''}>${st}</option>`).join('')}
+        </select>
+        <select id="proposalCustomerFilter" style="max-width:240px;">
+          <option value="">All customers</option>
+          ${custs.map(c=>`<option value="${c.id}" ${f.customerId===c.id?'selected':''}>${escHtml(customerLabel(c))}</option>`).join('')}
+        </select>
+        ${(f.search || f.status || f.customerId) ? `<button class="ghost small" id="clearProposalFilters">Clear filters</button>` : ''}
+      </div>
+    </div>
+    ${rows.length? rows.map(pr=>proposalCard(pr)).join('') : `<div class="panel empty">${State.proposals.length? 'No proposals match these filters.' : 'No proposals yet. Click "Add proposal" to create the first one.'}</div>`}
   `;
 }
 
@@ -1313,7 +1368,14 @@ function docxImageParaXml(rid, wEmu, hEmu, docPrId, name){
 
 const DOCX_EMU_PER_IN = 914400;
 
-async function buildHamperSectionDocxParts(selectedProducts){
+// A hamper's price on a proposal, inc VAT, with or without its shipping.
+function proposalHamperPrice(p, excludeShipping){
+  const totals = computeHamperTotals(p);
+  if(!excludeShipping) return totals.totalIncVat;
+  return totals.vatBreakdown.filter(v=>!v.isShipping).reduce((sum,v)=>sum+v.totalIncVat, 0);
+}
+
+async function buildHamperSectionDocxParts(selectedProducts, excludeShipping){
   let xml = '';
   const mediaFiles = {};
   const relsAdditions = [];
@@ -1324,8 +1386,7 @@ async function buildHamperSectionDocxParts(selectedProducts){
   }
   for(let idx=0; idx<selectedProducts.length; idx++){
     const p = selectedProducts[idx];
-    const totals = computeHamperTotals(p);
-    xml += docxHeadingParaXml('Option '+(idx+1)+': '+p.name+' — '+fmtMoney(totals.totalIncVat)+' including VAT');
+    xml += docxHeadingParaXml('Option '+(idx+1)+': '+p.name+' — '+fmtMoney(proposalHamperPrice(p, excludeShipping))+' including VAT');
     if(p.photoUrl){
       try{
         const norm = await normalizeImageToJpeg(p.photoUrl, 1000);
@@ -1378,7 +1439,7 @@ async function generateProposalDoc(proposalId){
       docXml = docXml.slice(0, insertPos) + customerRun + docXml.slice(insertPos);
     }
 
-    const built = await buildHamperSectionDocxParts(selectedProducts);
+    const built = await buildHamperSectionDocxParts(selectedProducts, proposal.excludeShipping);
     const hamperXml = built.xml, mediaFiles = built.mediaFiles, relsAdditions = built.relsAdditions;
     const startMarker = 'some options below may not include photos.</w:t></w:r></w:p>';
     const endMarker = '<w:p w14:paraId="5537DBF7"';
@@ -2509,8 +2570,17 @@ function openCustomerModal(existing, opts){
 function openProposalModal(existing){
   if(existing) noteModalRef('proposal', existing.id);
   const todayStr = new Date().toISOString().slice(0,10);
-  const pr = existing ? JSON.parse(JSON.stringify(existing)) : { id:null, customerId: null, proposalDate: todayStr, status:'Draft', hamperIds: [], docUrl:'', docName:'', docSource:'' };
+  const pr = existing ? JSON.parse(JSON.stringify(existing)) : { id:null, name:'', customerId: null, proposalDate: todayStr, status:'Draft', excludeShipping:false, hamperIds: [], docUrl:'', docName:'', docSource:'' };
   if(!PROPOSAL_STATUSES.includes(pr.status)) pr.status = 'Draft';
+  // The name follows the customer and date until someone types their own.
+  let nameIsDefault = !pr.name || pr.name===defaultProposalName(pr.customerId, pr.proposalDate);
+  if(!pr.name) pr.name = defaultProposalName(pr.customerId, pr.proposalDate);
+  const refreshDefaultName = ()=>{
+    if(!nameIsDefault) return;
+    pr.name = defaultProposalName(pr.customerId, pr.proposalDate);
+    const el = document.getElementById('f_propname');
+    if(el) el.value = pr.name;
+  };
   // normalize to exactly 10 slots (null = no selection)
   while(pr.hamperIds.length < 10) pr.hamperIds.push(null);
   pr.hamperIds = pr.hamperIds.slice(0,10);
@@ -2521,6 +2591,7 @@ function openProposalModal(existing){
       <div class="modal-overlay" id="ovl">
         <div class="modal" style="width:480px;">
           <h3>${existing? 'Edit proposal':'Add proposal'}</h3>
+          <div class="field"><label>Proposal name</label><input id="f_propname" type="text" value="${escHtml(pr.name)}"></div>
           <div class="field">
             <label>Customer</label>
             ${State.customers.length? `
@@ -2531,6 +2602,10 @@ function openProposalModal(existing){
             <div class="field"><label>Proposal date</label><input id="f_propdate" type="date" value="${pr.proposalDate||''}"></div>
             <div class="field"><label>Status</label><select id="f_propstatus">${PROPOSAL_STATUSES.map(st=>`<option value="${st}" ${st===pr.status?'selected':''}>${st}</option>`).join('')}</select></div>
           </div>
+          <div class="field">
+            <label style="display:flex;align-items:center;gap:8px;color:var(--text);font-size:13.5px;margin:0;"><input type="checkbox" id="f_propnoship" style="width:auto;" ${pr.excludeShipping?'checked':''}> Exclude shipping on proposal</label>
+            <div class="savehint" style="margin-top:4px;">The generated document quotes each hamper's price without shipping.</div>
+          </div>
           <label>Hamper options</label>
           <div style="margin-top:6px;">
             ${State.products.length? [0,1,2,3,4,5,6,7,8,9].map(i=>{
@@ -2539,8 +2614,7 @@ function openProposalModal(existing){
                 <select class="hamperSlot" data-slot="${i}">
                   <option value="">No hamper</option>
                   ${State.products.map(p=>{
-                    const totals = computeHamperTotals(p);
-                    return `<option value="${p.id}" ${current===p.id?'selected':''}>${p.name} — ${fmtMoney(totals.totalIncVat)}</option>`;
+                    return `<option value="${p.id}" ${current===p.id?'selected':''}>${p.name} — ${fmtMoney(proposalHamperPrice(p, pr.excludeShipping))}</option>`;
                   }).join('')}
                 </select>
               </div>`;
@@ -2555,24 +2629,27 @@ function openProposalModal(existing){
     document.getElementById('cancelBtn').onclick = closeModal;
     document.getElementById('addCustomerBtn').onclick = ()=>{
       openCustomerModal(null, {
-        onDone: (newCustomer)=>{ pr.customerId = newCustomer.id; paint(); },
+        onDone: (newCustomer)=>{ pr.customerId = newCustomer.id; refreshDefaultName(); paint(); },
         onCancel: ()=> paint()
       });
     };
     if(document.getElementById('f_customer')){
       attachSearchBox(document.getElementById('f_customer'), {
         options: customerSearchOptions,
-        onPick: (id)=>{ if(pr.customerId!==id){ pr.customerId = id; paint(); } },
-        onNoMatch: ()=>{ if(pr.customerId){ pr.customerId = null; paint(); } },
+        onPick: (id)=>{ if(pr.customerId!==id){ pr.customerId = id; refreshDefaultName(); paint(); } },
+        onNoMatch: ()=>{ if(pr.customerId){ pr.customerId = null; refreshDefaultName(); paint(); } },
       });
     }
-    document.getElementById('f_propdate').oninput = (e)=>{ pr.proposalDate = e.target.value; };
+    document.getElementById('f_propname').oninput = (e)=>{ pr.name = e.target.value; nameIsDefault = false; };
+    document.getElementById('f_propnoship').onchange = (e)=>{ pr.excludeShipping = e.target.checked; paint(); };
+    document.getElementById('f_propdate').oninput = (e)=>{ pr.proposalDate = e.target.value; refreshDefaultName(); };
     document.getElementById('f_propstatus').onchange = (e)=>{ pr.status = e.target.value; };
     document.querySelectorAll('.hamperSlot').forEach(sel=>{
       sel.onchange = (e)=>{ pr.hamperIds[parseInt(sel.dataset.slot)] = e.target.value || null; };
     });
     document.getElementById('saveBtn').onclick = async ()=>{
       if(!pr.customerId){ showToast('Choose or add a customer'); return; }
+      pr.name = pr.name.trim() || defaultProposalName(pr.customerId, pr.proposalDate);
       const chosen = pr.hamperIds.filter(Boolean);
       const hasDuplicates = new Set(chosen).size !== chosen.length;
       if(hasDuplicates){ showToast('The same hamper has been chosen more than once — please pick different options'); return; }
@@ -2800,6 +2877,7 @@ function openOrderModal(existing, prefill){
     if(document.getElementById('addItemBtn')){
       document.getElementById('addItemBtn').onclick = ()=>{
         o.items.push({ kind:'hamper', productId: State.products[0].id, stockId:null, qty: 1, qtyPacked: 0, qtyShipped: 0 });
+        o.notes = withHamperNote(o.notes, State.products[0].id);
         paint();
       };
     }
@@ -2822,7 +2900,8 @@ function openOrderModal(existing, prefill){
     document.querySelectorAll('[data-removeitem]').forEach(b=>{
       b.onclick = ()=>{
         const idx = parseInt(b.dataset.removeitem);
-        o.items.splice(idx,1);
+        const removed = o.items.splice(idx,1)[0];
+        if(removed && !isItemLine(removed) && !o.items.some(it=>!isItemLine(it) && it.productId===removed.productId)) o.notes = withoutHamperNote(o.notes, removed.productId);
         // keep the open/closed state attached to the lines that remain
         const shifted = [...expanded].filter(i=>i!==idx).map(i=> i>idx ? i-1 : i);
         expanded.clear(); shifted.forEach(i=>expanded.add(i));
@@ -2830,7 +2909,14 @@ function openOrderModal(existing, prefill){
       };
     });
     document.querySelectorAll('.itemSelect').forEach(sel=>{
-      sel.onchange = ()=>{ o.items[parseInt(sel.dataset.iidx)].productId = sel.value; paint(); };
+      sel.onchange = ()=>{
+        const line = o.items[parseInt(sel.dataset.iidx)];
+        const oldId = line.productId;
+        line.productId = sel.value;
+        if(!o.items.some(it=>!isItemLine(it) && it.productId===oldId)) o.notes = withoutHamperNote(o.notes, oldId);
+        o.notes = withHamperNote(o.notes, sel.value);
+        paint();
+      };
     });
     document.querySelectorAll('.itemQty').forEach(inp=>{
       inp.oninput = ()=>{
@@ -2909,16 +2995,30 @@ function convertProposalToOrder(pr){
   if(!pr) return;
   const hamperIds = (pr.hamperIds||[]).filter(id=> id && productById(id));
   if(!hamperIds.length){ showToast('This proposal has no hampers to put on an order'); return; }
-  const existingOrder = State.orders.find(o=>o.proposalId===pr.id);
-  const go = ()=> openOrderModal(null, {
+  openOrderModal(null, {
     customerId: pr.customerId,
     proposalId: pr.id,
-    notes: '',
+    notes: hamperIds.reduce((notes, id)=> withHamperNote(notes, id), ''),
     items: hamperIds.map(id=>({ kind:'hamper', productId:id, stockId:null, qty:0, qtyPacked:0, qtyShipped:0 })),
   });
-  if(existingOrder){
-    openConfirmModal(`An order has already been made from this proposal (#${existingOrder.id.slice(-5)}). Make another one?`, go, { title:'Make another order?', confirmLabel:'Make another order', confirmClass:'primary' });
-  } else go();
+}
+
+// A hamper's own notes go into the order notes as "Hamper name: notes",
+// once, when the hamper goes on the order. withoutHamperNote takes that line
+// back out (if nobody has edited it) when the hamper comes off again.
+function hamperNoteLine(productId){
+  const p = productById(productId);
+  return p && (p.notes||'').trim() ? `${p.name}: ${p.notes.trim()}` : '';
+}
+function withHamperNote(notes, productId){
+  const line = hamperNoteLine(productId);
+  if(!line || (notes||'').includes(line)) return notes||'';
+  return notes ? notes.replace(/\s+$/,'')+'\n'+line : line;
+}
+function withoutHamperNote(notes, productId){
+  const line = hamperNoteLine(productId);
+  if(!line || !notes) return notes||'';
+  return notes.split('\n').filter(l=>l!==line).join('\n');
 }
 
 function openRowEditor(kind, id){
@@ -3014,6 +3114,14 @@ function attachHandlers(){
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
+  const proposalSearch = document.getElementById('proposalSearch');
+  if(proposalSearch) proposalSearch.oninput = (e)=>{ State.proposalFilter.search = e.target.value; renderProposalsOnly(); };
+  const proposalStatusFilter = document.getElementById('proposalStatusFilter');
+  if(proposalStatusFilter) proposalStatusFilter.onchange = (e)=>{ State.proposalFilter.status = e.target.value; render(); };
+  const proposalCustomerFilter = document.getElementById('proposalCustomerFilter');
+  if(proposalCustomerFilter) proposalCustomerFilter.onchange = (e)=>{ State.proposalFilter.customerId = e.target.value; render(); };
+  const clearProposalFilters = document.getElementById('clearProposalFilters');
+  if(clearProposalFilters) clearProposalFilters.onclick = ()=>{ State.proposalFilter = { search:'', status:'', customerId:'' }; render(); };
   const newProposalBtn = document.getElementById('newProposalBtn');
   if(newProposalBtn) newProposalBtn.onclick = ()=> openProposalModal(null);
   document.querySelectorAll('[data-editproposal]').forEach(b=>{
@@ -3023,7 +3131,7 @@ function attachHandlers(){
     b.onclick = ()=>{
       const pr = State.proposals.find(p=>p.id===b.dataset.delproposal);
       const cust = pr ? customerById(pr.customerId) : null;
-      openConfirmModal(`Delete the proposal for "${cust? customerLabel(cust) : 'this customer'}"? This can't be undone.`, async ()=>{
+      openConfirmModal(`Delete the proposal "${escHtml(proposalName(pr))}"? This can't be undone.`, async ()=>{
         State.proposals = await api.proposals.remove(b.dataset.delproposal);
         render(); showToast('Proposal deleted');
       });

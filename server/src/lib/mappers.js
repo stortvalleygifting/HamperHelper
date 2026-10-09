@@ -144,6 +144,8 @@ export function proposalToApi(row, hampers) {
     id: row.id,
     customerId: row.customer_id,
     proposalDate: row.proposal_date,
+    name: row.name || '',
+    excludeShipping: !!row.exclude_shipping,
     status: row.status || 'Draft',
     hamperIds,
     docName: row.doc_name || '',
