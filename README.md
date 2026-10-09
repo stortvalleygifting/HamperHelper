@@ -163,6 +163,13 @@ VAT-inclusive. The order then stores the Zoho invoice id and number, takes the
 Zoho number as its invoice number and is no longer Ready to invoice. An order
 that already has a Zoho invoice is skipped.
 
+Every 5 minutes (and from *Check for sent invoices* on Reports) the server
+looks up each Zoho invoice still a draft as far as it knows. Once one has been
+sent (marked sent, emailed, or paid) its order gets Invoice sent ticked and
+Ready to invoice unticked, once only: unticking by hand afterwards sticks
+(`orders.zoho_invoice_status` holds the last status seen). An invoice deleted
+in Zoho is unlinked so the order can be invoiced again.
+
 Customers link to Zoho contacts (`customers.zoho_contact_id`); nothing is
 bulk-imported from Zoho. **Match with Zoho** on the Customers page (admins)
 lists every unlinked customer with Zoho's likeliest matches (name, email,

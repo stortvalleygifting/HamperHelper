@@ -11,6 +11,7 @@ import {
   listZohoCustomers, searchZohoCustomers, matchCandidates, customerFieldsFromContact, findOrCreateZohoContact,
 } from '../lib/zohoContacts.js';
 import { listCustomers } from './customers.js';
+import { syncSentInvoices } from '../lib/zohoSync.js';
 import { INVOICE_VAT_LABELS } from './reports.js';
 import { listOrders } from './orders.js';
 import { listProducts } from './products.js';
@@ -152,7 +153,7 @@ async function createDraftInvoice(conn, ctx, orderId) {
     // Not sent: it lands in Zoho as a draft for checking.
     const invoice = (await zohoBooks(conn, 'POST', '/invoices', { body })).invoice;
     await pool.query(
-      'UPDATE orders SET zoho_invoice_id = $1, zoho_invoice_number = $2, invoice_number = $2, ready_to_invoice = false WHERE id = $3',
+      'UPDATE orders SET zoho_invoice_id = $1, zoho_invoice_number = $2, invoice_number = $2, ready_to_invoice = false, zoho_invoice_status = \'draft\' WHERE id = $3',
       [String(invoice.invoice_id), invoice.invoice_number, orderId]
     );
     return invoice.invoice_number;
@@ -271,6 +272,14 @@ router.post('/customer-create', requireAdmin, async (req, res) => {
   const id = await findOrCreateZohoContact(conn, rows[0]);
   await pool.query('UPDATE customers SET zoho_contact_id = $1 WHERE id = $2', [id, rows[0].id]);
   res.json({ customers: await listCustomers() });
+});
+
+// "Check now" on Reports, instead of waiting for the next 5-minute check.
+router.post('/sync-sent', requireAdmin, async (req, res) => {
+  const conn = await needConnection(res);
+  if (!conn) return;
+  const result = await syncSentInvoices();
+  res.json({ ...result, orders: await listOrders() });
 });
 
 export default router;

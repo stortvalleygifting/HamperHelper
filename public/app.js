@@ -1627,9 +1627,10 @@ function zohoPanelHtml(){
         <p style="margin:0 0 10px;font-size:13.5px;">Connected to <strong>${escHtml(z.organizationName || 'Zoho Books')}</strong>${z.connectedBy ? ` by ${escHtml(z.connectedBy)}` : ''}.</p>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
           <button class="primary" id="zohoSendReadyBtn" ${ready.length ? '' : 'disabled'}>Create draft invoices for ${ready.length} ready order${ready.length===1?'':'s'}</button>
+          <button class="ghost small" id="zohoSyncSentBtn">Check for sent invoices</button>
           <button class="ghost small" id="zohoDisconnectBtn">Disconnect</button>
         </div>
-        <div class="savehint">Each order marked Ready to invoice becomes one draft invoice in Zoho, to check and send from there. You can also create one from an order's pop-up.</div>`}
+        <div class="savehint">Each order marked Ready to invoice becomes one draft invoice in Zoho, to check and send from there. You can also create one from an order's pop-up. Every 5 minutes Hamper Helper checks Zoho, and once an invoice has been sent it ticks Invoice sent on the order.</div>`}
     </div>`;
 }
 
@@ -3248,6 +3249,15 @@ function attachHandlers(){
       try{ await api.zoho.disconnect(); State.zoho = await api.zoho.status(); render(); showToast('Zoho Books disconnected'); }
       catch(e){ showToast(e.message || 'Could not disconnect'); }
     }, { title:'Disconnect Zoho Books?', confirmLabel:'Disconnect' });
+  };
+  const zohoSyncSentBtn = document.getElementById('zohoSyncSentBtn');
+  if(zohoSyncSentBtn) zohoSyncSentBtn.onclick = async ()=>{
+    zohoSyncSentBtn.disabled = true; zohoSyncSentBtn.textContent = 'Checking Zoho…';
+    try{
+      const r = await api.zoho.syncSent();
+      State.orders = r.orders; render();
+      showToast(r.updated.length ? `${r.updated.length} order${r.updated.length===1?'':'s'} marked Invoice sent` : r.checked ? `No new sent invoices (${r.checked} still draft${r.checked===1?'':'s'} in Zoho)` : 'No Zoho drafts waiting to be sent');
+    }catch(e){ showToast(e.message || 'Could not reach Zoho'); render(); }
   };
   const zohoSendReadyBtn = document.getElementById('zohoSendReadyBtn');
   if(zohoSendReadyBtn) zohoSendReadyBtn.onclick = async ()=>{

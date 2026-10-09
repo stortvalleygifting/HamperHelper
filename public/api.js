@@ -103,6 +103,7 @@ const api = {
     customerMatches: () => apiRequest('GET', '/api/zoho/customer-matches'),
     linkCustomer: (customerId, contactId) => apiRequest('POST', '/api/zoho/customer-link', { customerId, contactId }),
     createCustomer: (customerId) => apiRequest('POST', '/api/zoho/customer-create', { customerId }),
+    syncSent: () => apiRequest('POST', '/api/zoho/sync-sent'),
   },
   colours: {
     create: (item) => apiRequest('POST', '/api/colours', item),
