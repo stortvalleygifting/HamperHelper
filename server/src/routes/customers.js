@@ -2,10 +2,12 @@ import { Router } from 'express';
 import { pool } from '../db.js';
 import { uid } from '../lib/ids.js';
 import { customerToApi } from '../lib/mappers.js';
+import { getConnection } from '../lib/zoho.js';
+import { findOrCreateZohoContact } from '../lib/zohoContacts.js';
 
 const router = Router();
 
-async function list() {
+export async function listCustomers() {
   const { rows } = await pool.query('SELECT * FROM customers ORDER BY company_name ASC');
   return rows.map(customerToApi);
 }
@@ -30,7 +32,7 @@ function fromBody(body) {
 }
 
 router.get('/', async (req, res) => {
-  res.json(await list());
+  res.json(await listCustomers());
 });
 
 router.post('/', async (req, res) => {
@@ -42,7 +44,18 @@ router.post('/', async (req, res) => {
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
     [id, f.company_name, f.source_id, f.contact_name, f.email, f.phone_primary, f.phone_secondary, f.contact_name2, f.email2, f.phone2_primary, f.phone2_secondary, f.ribbon_color, f.font_color, f.logo_url, f.notes]
   );
-  res.status(201).json({ id, customers: await list() });
+  // A customer picked from Zoho keeps its link; a new one can also be
+  // created in Zoho. If Zoho fails the customer is still saved here.
+  let zohoError = null;
+  const zohoId = req.body.zohoContactId ? String(req.body.zohoContactId) : null;
+  try {
+    const conn = (zohoId || req.body.createInZoho) ? await getConnection() : null;
+    const linkId = zohoId || (conn ? await findOrCreateZohoContact(conn, { ...f, id }) : null);
+    if (linkId) await pool.query('UPDATE customers SET zoho_contact_id = $1 WHERE id = $2', [linkId, id]);
+  } catch (err) {
+    zohoError = err.message;
+  }
+  res.status(201).json({ id, customers: await listCustomers(), zohoError });
 });
 
 router.put('/:id', async (req, res) => {
@@ -54,7 +67,10 @@ router.put('/:id', async (req, res) => {
     [f.company_name, f.source_id, f.contact_name, f.email, f.phone_primary, f.phone_secondary, f.contact_name2, f.email2, f.phone2_primary, f.phone2_secondary, f.ribbon_color, f.font_color, f.logo_url, f.notes, req.params.id]
   );
   if (!rowCount) return res.status(404).json({ error: 'Customer not found' });
-  res.json({ id: req.params.id, customers: await list() });
+  if ('zohoContactId' in req.body) {
+    await pool.query('UPDATE customers SET zoho_contact_id = $1 WHERE id = $2', [req.body.zohoContactId ? String(req.body.zohoContactId) : null, req.params.id]);
+  }
+  res.json({ id: req.params.id, customers: await listCustomers() });
 });
 
 router.delete('/:id', async (req, res) => {
@@ -71,7 +87,7 @@ router.delete('/:id', async (req, res) => {
   } finally {
     client.release();
   }
-  res.json(await list());
+  res.json(await listCustomers());
 });
 
 // Bulk upsert from a parsed CSV. Source is matched by label text since the
@@ -122,8 +138,7 @@ router.post('/import', async (req, res) => {
   } finally {
     client.release();
   }
-  res.json({ added, updated, customers: await list() });
+  res.json({ added, updated, customers: await listCustomers() });
 });
 
 export default router;
-export { list as listCustomers };

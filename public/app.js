@@ -1596,6 +1596,10 @@ function renderReports(){
 
 // ---------- Zoho Books ----------
 function zohoConnected(){ return !!(State.zoho && State.zoho.connected); }
+function zohoContactLink(id, text){
+  if(!id || !State.zoho || !State.zoho.contactUrlBase) return '';
+  return `<a href="${State.zoho.contactUrlBase}${encodeURIComponent(id)}" target="_blank" rel="noopener" class="zohoLink" title="Open this customer in Zoho Books">${escHtml(text || 'Zoho')} ↗</a>`;
+}
 function zohoInvoiceLink(o){
   if(!o.zohoInvoiceId) return '';
   const label = `Zoho invoice ${escHtml(o.zohoInvoiceNumber || '')}`.trim();
@@ -1655,6 +1659,101 @@ function openZohoResultsDialog(results){
   document.body.appendChild(wrap);
 }
 
+// Customers not yet linked to Zoho, each with Zoho's likeliest matches.
+// Nothing changes until Rob confirms a row: then the customer is linked and
+// takes Zoho's name, or (with no match) is created in Zoho.
+function openZohoMatchModal(){
+  let data = null, error = null;
+  const rows = new Map(); // customer id -> { sel, extra, done, busy }
+  const zoho = (r)=> { const st = rows.get(r.id); const seen = new Set(r.candidates.map(z=>z.id)); return r.candidates.concat(st.extra.filter(z=>!seen.has(z.id))); };
+  const describe = (z)=> [z.contactPerson, z.email].filter(Boolean).join(' · ');
+  function rowHtml(r){
+    const st = rows.get(r.id);
+    if(st.done) return `<div class="zmRow zmDone" data-zmrow="${r.id}"><div><strong>${escHtml(r.companyName)}</strong></div><div>✓ ${escHtml(st.done)}</div></div>`;
+    const options = zoho(r);
+    const picked = options.find(z=>z.id===st.sel);
+    const renames = picked && picked.name.trim() !== r.companyName.trim();
+    return `<div class="zmRow" data-zmrow="${r.id}">
+      <div class="zmHH"><strong>${escHtml(r.companyName)}</strong><div class="savehint" style="margin:0;">${escHtml([r.contactName, r.email].filter(Boolean).join(' · '))}</div></div>
+      <div class="zmPick">
+        <select data-zmsel>${options.map(z=>`<option value="${escHtml(z.id)}" ${z.id===st.sel?'selected':''}>${escHtml(z.name)}</option>`).join('')}<option value="" ${!st.sel?'selected':''}>${options.length ? 'None of these' : 'No match found'}</option></select>
+        <div class="savehint" style="margin:2px 0 0;">${picked
+          ? `${picked.reason ? `<strong>${escHtml(picked.reason)}</strong><br>` : ''}${escHtml(describe(picked) || 'No contact details in Zoho')}${picked.linkedTo ? ` · already linked to ${escHtml(picked.linkedTo.name)}` : ''}${renames ? `<br>Renames to <strong>${escHtml(picked.name)}</strong>` : ''}`
+          : 'Search Zoho below, or create this customer in Zoho.'}</div>
+        <div style="display:flex;gap:6px;margin-top:6px;"><input data-zmsearch placeholder="Search Zoho by name or email"><button class="small ghost" data-zmsearchbtn>Search</button></div>
+      </div>
+      <div class="zmActions">
+        <button class="small primary" data-zmconfirm ${st.busy?'disabled':''}>${picked ? 'Confirm match' : 'Create in Zoho'}</button>
+        <button class="small ghost" data-zmskip>Skip</button>
+      </div>
+    </div>`;
+  }
+  function paint(){
+    const list = data ? data.customers.filter(r=>rows.get(r.id).done !== 'skip') : [];
+    const open = list.filter(r=>!rows.get(r.id).done).length;
+    document.getElementById('modalRoot').innerHTML = `
+      <div class="modal-overlay" id="ovl">
+        <div class="modal" style="width:860px;">
+          <h3>Match customers with Zoho</h3>
+          ${error ? `<p style="color:var(--berry);">${escHtml(error)}</p>`
+            : !data ? `<p class="savehint">Looking up your customers in Zoho…</p>`
+            : `<p class="savehint" style="margin-top:0;">${open} customer${open===1?'':'s'} to check. ${data.linkedCount} already linked. Zoho has ${data.zohoCount} customers. Confirming a match links the customer and renames it here to its Zoho name. Nothing is imported from Zoho.</p>
+              <div id="zmList">${list.length ? list.map(rowHtml).join('') : `<div class="empty">Every customer is linked to Zoho.</div>`}</div>`}
+          <div class="row-between" style="margin-top:16px;"><span></span><button class="primary" id="cancelBtn">Done</button></div>
+        </div>
+      </div>`;
+    document.getElementById('cancelBtn').onclick = ()=>{ closeModal(); render(); };
+    const listEl = document.getElementById('zmList');
+    if(listEl){ listEl.onclick = onClick; listEl.onchange = onChange; listEl.onkeydown = (e)=>{ if(e.target.matches('[data-zmsearch]') && e.key==='Enter'){ e.preventDefault(); search(e.target.closest('[data-zmrow]')); } }; }
+  }
+  const rowOf = (el)=> data.customers.find(r=>r.id===el.dataset.zmrow);
+  function repaintRow(r){
+    const el = document.querySelector(`[data-zmrow="${r.id}"]`);
+    if(!el) return;
+    if(rows.get(r.id).done === 'skip'){ el.remove(); return; }
+    el.outerHTML = rowHtml(r);
+  }
+  function onChange(e){
+    if(!e.target.matches('[data-zmsel]')) return;
+    const rowEl = e.target.closest('[data-zmrow]'), r = rowOf(rowEl);
+    rows.get(r.id).sel = e.target.value; repaintRow(r);
+  }
+  async function search(rowEl){
+    const r = rowOf(rowEl), text = rowEl.querySelector('[data-zmsearch]').value.trim();
+    if(text.length < 2){ showToast('Type at least 2 letters to search Zoho'); return; }
+    try{
+      const found = await api.zoho.searchContacts(text);
+      if(!found.length){ showToast('No customer in Zoho matches that'); return; }
+      const st = rows.get(r.id);
+      st.extra = found.concat(st.extra); st.sel = found[0].id;
+      repaintRow(r);
+    }catch(err){ showToast(err.message || 'Could not search Zoho'); }
+  }
+  async function onClick(e){
+    const rowEl = e.target.closest('[data-zmrow]');
+    if(!rowEl) return;
+    const r = rowOf(rowEl), st = rows.get(r.id);
+    if(e.target.matches('[data-zmsearchbtn]')) return search(rowEl);
+    if(e.target.matches('[data-zmskip]')){ st.done = 'skip'; return repaintRow(r); }
+    if(!e.target.matches('[data-zmconfirm]')) return;
+    const picked = zoho(r).find(z=>z.id===st.sel);
+    st.busy = true; repaintRow(r);
+    try{
+      const result = picked ? await api.zoho.linkCustomer(r.id, picked.id) : await api.zoho.createCustomer(r.id);
+      State.customers = result.customers;
+      st.done = picked ? `Linked to ${picked.name}${picked.name.trim() !== r.companyName.trim() ? ' and renamed' : ''}` : 'Created in Zoho';
+    }catch(err){ showToast(err.message || 'Zoho said no'); }
+    st.busy = false; repaintRow(r);
+  }
+  paint();
+  api.zoho.customerMatches().then(d=>{
+    // Likeliest matches first; customers with no suggestion at the end.
+    d.customers.sort((a,b)=> ((b.candidates[0]||{}).score||0) - ((a.candidates[0]||{}).score||0) || a.companyName.localeCompare(b.companyName));
+    d.customers.forEach(r=> rows.set(r.id, { sel: r.candidates[0] ? r.candidates[0].id : '', extra: [], done: '', busy: false }));
+    data = d; paint();
+  }).catch(e=>{ error = e.message || 'Could not reach Zoho'; paint(); });
+}
+
 function renderSources(){
   const rows = State.sources.slice().sort((a,b)=> a.label.localeCompare(b.label));
   return `
@@ -1711,6 +1810,7 @@ function renderCustomers(){
         <button class="ghost" id="downloadCustomersCsvBtn">Download CSV</button>
         <button class="ghost" id="uploadCustomersCsvBtn">Upload CSV</button>
         <input type="file" id="customersCsvFileInput" accept=".csv" style="display:none;">
+        ${zohoConnected() && State.me && State.me.isAdmin ? `<button class="ghost" id="zohoMatchBtn">Match with Zoho</button>` : ''}
         <button class="primary" id="newCustomerBtn">Add customer</button>
       </div>
     </div>
@@ -1727,7 +1827,7 @@ function renderCustomers(){
         </tr></thead><tbody>
         ${rows.length ? rows.map(c=>`<tr class="clickrow" data-rowkind="customer" data-rowid="${c.id}">
           <td>${c.logoUrl? `<img src="${c.logoUrl}" class="logoThumb">` : `<div class="logoThumb" style="background:${colourCss(c.ribbonColor)||'#E7DCC4'};"></div>`}</td>
-          <td><strong>${customerLink(c, c.companyName)}</strong></td>
+          <td><strong>${customerLink(c, c.companyName)}</strong>${c.zohoContactId ? ` ${zohoContactLink(c.zohoContactId)}` : ''}</td>
           <td>${c.contactName||'—'}</td>
           <td>${c.email||'—'}</td>
           <td>${c.phonePrimary||'—'}${c.phoneSecondary? ` / ${c.phoneSecondary}` : ''}</td>
@@ -2460,13 +2560,78 @@ function openCustomerModal(existing, opts){
   opts = opts || {};
   const c = existing ? JSON.parse(JSON.stringify(existing)) : { id:null, companyName:'', contactName:'', email:'', phonePrimary:'', phoneSecondary:'', contactName2:'', phone2Primary:'', phone2Secondary:'', email2:'', ribbonColor:'', fontColor:'', sourceId:null, notes:'', logoUrl:'' };
   let pendingLogoFile = null; // uploaded to /api/uploads only once Save is clicked
+  // Zoho Books: search to fill the form from an existing Zoho customer, or
+  // create the new customer in Zoho too when saving.
+  const zb = { search: existing ? existing.companyName : '', results: null, busy: false, changing: false, createInZoho: true, linkedName: '' };
+  function zohoCustBoxHtml(){
+    if(c.zohoContactId && !zb.changing){
+      return `<div class="field"><label>Zoho Books</label><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <span>${zb.linkedName ? `Linked to <strong>${escHtml(zb.linkedName)}</strong>` : 'Linked'}</span>${zohoContactLink(c.zohoContactId, 'Open in Zoho')}
+        <button class="linkbtn" id="zohoChangeBtn">Change</button></div></div>`;
+    }
+    const rows = zb.results;
+    return `<div class="field zohoFind">
+      <label>${existing ? 'Find this customer in Zoho' : 'Search Zoho first'}</label>
+      <div style="display:flex;gap:8px;"><input id="zohoSearchInput" placeholder="Company name or email" value="${escHtml(zb.search)}"><button class="ghost small" id="zohoSearchBtn" style="white-space:nowrap;" ${zb.busy?'disabled':''}>${zb.busy?'Searching…':'Search Zoho'}</button></div>
+      ${rows ? (rows.length ? `<div class="zohoResults">${rows.map(z=>`<div class="zohoResult">
+          <div><strong>${escHtml(z.name)}</strong><div class="savehint" style="margin:0;">${escHtml([z.contactPerson, z.email, z.phone].filter(Boolean).join(' · ') || 'No contact details')}</div></div>
+          ${z.linkedTo && z.linkedTo.id !== c.id ? `<span class="savehint" style="margin:0;">Already here as ${escHtml(z.linkedTo.name)}</span>` : `<button class="small primary" data-zohouse="${escHtml(z.id)}">Use this</button>`}
+        </div>`).join('')}</div>` : `<div class="savehint">No customer in Zoho matches that.</div>`) : ''}
+      ${!existing ? `<label class="checkline"><input type="checkbox" id="zohoCreateChk" ${zb.createInZoho?'checked':''}> If they're not in Zoho, create them there too when saving</label>` : ''}
+      ${zb.changing ? `<button class="linkbtn" id="zohoKeepBtn">Keep the current link</button>` : ''}
+    </div>`;
+  }
+  function paintZohoBox(){
+    const box = document.getElementById('zohoCustBox');
+    if(!box) return;
+    box.innerHTML = zohoCustBoxHtml();
+    const input = document.getElementById('zohoSearchInput');
+    const run = async ()=>{
+      zb.search = input.value.trim();
+      if(zb.search.length < 2){ showToast('Type at least 2 letters to search Zoho'); return; }
+      zb.busy = true; paintZohoBox();
+      try{ zb.results = await api.zoho.searchContacts(zb.search); }
+      catch(e){ showToast(e.message || 'Could not search Zoho'); }
+      zb.busy = false; paintZohoBox();
+    };
+    if(input){
+      input.onkeydown = (e)=>{ if(e.key==='Enter'){ e.preventDefault(); run(); } };
+      document.getElementById('zohoSearchBtn').onclick = run;
+    }
+    const chk = document.getElementById('zohoCreateChk');
+    if(chk) chk.onchange = ()=>{ zb.createInZoho = chk.checked; };
+    const change = document.getElementById('zohoChangeBtn');
+    if(change) change.onclick = ()=>{ zb.changing = true; paintZohoBox(); };
+    const keep = document.getElementById('zohoKeepBtn');
+    if(keep) keep.onclick = ()=>{ zb.changing = false; paintZohoBox(); };
+    box.querySelectorAll('[data-zohouse]').forEach(b=>{
+      b.onclick = async ()=>{
+        b.disabled = true;
+        try{
+          const z = await api.zoho.getContact(b.dataset.zohouse);
+          const f = z.fields;
+          const set = (id, val, always)=>{ const el = document.getElementById(id); if(el && val && (always || !existing || !el.value.trim())) el.value = val; };
+          // A new customer takes everything from Zoho. An existing one takes
+          // Zoho's name and only fills in details it doesn't have yet.
+          set('f_company', f.companyName, true);
+          set('f_contact', f.contactName); set('f_email', f.email); set('f_phone', f.phonePrimary); set('f_phone_secondary', f.phoneSecondary);
+          set('f_contact2', f.contactName2); set('f_email2', f.email2); set('f_phone2', f.phone2Primary); set('f_phone2_secondary', f.phone2Secondary);
+          c.zohoContactId = z.id; zb.linkedName = f.companyName; zb.changing = false;
+          const st = modalState(); if(st) st.dirty = true;
+          paintZohoBox();
+          showToast(existing ? 'Linked to Zoho. Save to keep it.' : 'Filled in from Zoho');
+        }catch(e){ b.disabled = false; showToast(e.message || 'Could not load that Zoho customer'); }
+      };
+    });
+  }
 
   function paint(){
     document.getElementById('modalRoot').innerHTML = `
       <div class="modal-overlay" id="ovl">
         <div class="modal">
           <h3>${existing? 'Edit customer':'Add customer'}</h3>
-          <div class="field"><label>Company name</label><input id="f_company" value="${c.companyName}"></div>
+          ${zohoConnected() ? `<div id="zohoCustBox" data-nodirty>${zohoCustBoxHtml()}</div>` : ''}
+          <div class="field"><label>Company name</label><input id="f_company" value="${escHtml(c.companyName)}"></div>
           <div class="field">
             <label>Source</label>
             <select id="f_source">
@@ -2474,17 +2639,17 @@ function openCustomerModal(existing, opts){
               ${State.sources.map(s=>`<option value="${s.id}" ${s.id===c.sourceId?'selected':''}>${s.label}</option>`).join('')}
             </select>
           </div>
-          <div class="field"><label>Main contact name</label><input id="f_contact" value="${c.contactName}"></div>
+          <div class="field"><label>Main contact name</label><input id="f_contact" value="${escHtml(c.contactName)}"></div>
           <div class="grid3">
-            <div class="field"><label>Email address</label><input id="f_email" type="email" value="${c.email||''}"></div>
-            <div class="field"><label>Primary phone</label><input id="f_phone" value="${c.phonePrimary||''}"></div>
-            <div class="field"><label>Secondary phone</label><input id="f_phone_secondary" value="${c.phoneSecondary||''}"></div>
+            <div class="field"><label>Email address</label><input id="f_email" type="email" value="${escHtml(c.email)}"></div>
+            <div class="field"><label>Primary phone</label><input id="f_phone" value="${escHtml(c.phonePrimary)}"></div>
+            <div class="field"><label>Secondary phone</label><input id="f_phone_secondary" value="${escHtml(c.phoneSecondary)}"></div>
           </div>
-          <div class="field"><label>2nd contact name</label><input id="f_contact2" value="${c.contactName2||''}"></div>
+          <div class="field"><label>2nd contact name</label><input id="f_contact2" value="${escHtml(c.contactName2)}"></div>
           <div class="grid3">
-            <div class="field"><label>2nd email address</label><input id="f_email2" type="email" value="${c.email2||''}"></div>
-            <div class="field"><label>2nd primary phone</label><input id="f_phone2" value="${c.phone2Primary||''}"></div>
-            <div class="field"><label>2nd secondary phone</label><input id="f_phone2_secondary" value="${c.phone2Secondary||''}"></div>
+            <div class="field"><label>2nd email address</label><input id="f_email2" type="email" value="${escHtml(c.email2)}"></div>
+            <div class="field"><label>2nd primary phone</label><input id="f_phone2" value="${escHtml(c.phone2Primary)}"></div>
+            <div class="field"><label>2nd secondary phone</label><input id="f_phone2_secondary" value="${escHtml(c.phone2Secondary)}"></div>
           </div>
           <div class="grid2">
             <div class="field">
@@ -2516,6 +2681,7 @@ function openCustomerModal(existing, opts){
         </div>
       </div>`;
     document.getElementById('cancelBtn').onclick = ()=>{ if(opts.onCancel) opts.onCancel(); else closeModal(); };
+    paintZohoBox();
     const ribbonPick = document.getElementById('f_ribbon_pick'), ribbonText = document.getElementById('f_ribbon');
     const ribbonValue = ()=> ribbonPick.value==='__other' ? ribbonText.value.trim() : ribbonPick.value;
     const showRibbon = ()=>{ document.getElementById('ribbonSwatch').innerHTML = colourSwatch(ribbonValue(), 22); };
@@ -2557,9 +2723,10 @@ function openCustomerModal(existing, opts){
           const uploaded = await api.uploads.image(pendingLogoFile);
           c.logoUrl = uploaded.url;
         }
-        const result = existing ? await api.customers.update(c.id, c) : await api.customers.create(c);
+        const createInZoho = !existing && zohoConnected() && !c.zohoContactId && zb.createInZoho;
+        const result = existing ? await api.customers.update(c.id, c) : await api.customers.create({ ...c, createInZoho });
         State.customers = result.customers;
-        showToast('Customer saved');
+        showToast(result.zohoError ? `Customer saved here, but not in Zoho. ${result.zohoError}` : createInZoho ? 'Customer saved here and in Zoho' : !existing && c.zohoContactId ? 'Customer saved and linked to Zoho' : 'Customer saved');
         if(opts.onDone){ opts.onDone({ ...c, id: result.id }); } else { closeModal(); render(); }
       }catch(e){ showToast(e.message || 'Could not save customer'); }
     };
@@ -3350,6 +3517,8 @@ function attachHandlers(){
   });
   const newCustomerBtn = document.getElementById('newCustomerBtn');
   if(newCustomerBtn) newCustomerBtn.onclick = ()=> openCustomerModal(null);
+  const zohoMatchBtn = document.getElementById('zohoMatchBtn');
+  if(zohoMatchBtn) zohoMatchBtn.onclick = ()=> openZohoMatchModal();
 
   const downloadCustomersCsvBtn = document.getElementById('downloadCustomersCsvBtn');
   if(downloadCustomersCsvBtn) downloadCustomersCsvBtn.onclick = downloadCustomersCsv;

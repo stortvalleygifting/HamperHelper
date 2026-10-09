@@ -87,10 +87,10 @@ export async function zohoBooks(conn, method, path, { query, body, accessTokenOv
 
 // Where an admin can open a Books record in the browser, e.g.
 // https://www.zohoapis.eu -> https://books.zoho.eu.
-export function booksWebUrl(conn, invoiceId) {
+export function booksWebUrl(conn, kind, id) {
   const host = conn.api_domain
     .replace('://www.zohoapis.ca', '://books.zohocloud.ca')
     .replace('://www.zohoapis.', '://books.zoho.')
     .replace('://zohoapis.', '://books.zoho.');
-  return `${host}/app/${conn.organization_id}#/invoices/${invoiceId}`;
+  return `${host}/app/${conn.organization_id}#/${kind}/${id}`;
 }

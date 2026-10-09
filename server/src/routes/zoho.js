@@ -7,6 +7,10 @@ import {
   exchangeCode, getConnection, forgetAccessToken, zohoBooks, booksWebUrl,
 } from '../lib/zoho.js';
 import { invoiceLinesForOrder } from '../lib/invoiceLines.js';
+import {
+  listZohoCustomers, searchZohoCustomers, matchCandidates, customerFieldsFromContact, findOrCreateZohoContact,
+} from '../lib/zohoContacts.js';
+import { listCustomers } from './customers.js';
 import { INVOICE_VAT_LABELS } from './reports.js';
 import { listOrders } from './orders.js';
 import { listProducts } from './products.js';
@@ -29,7 +33,8 @@ router.get('/status', async (req, res) => {
     connected: !!conn,
     organizationName: conn ? conn.organization_name : null,
     connectedBy: conn ? conn.connected_by : null,
-    invoiceUrlBase: conn ? booksWebUrl(conn, '') : null,
+    invoiceUrlBase: conn ? booksWebUrl(conn, 'invoices', '') : null,
+    contactUrlBase: conn ? booksWebUrl(conn, 'contacts', '') : null,
     regions: Object.entries(ZOHO_REGIONS).map(([id, r]) => ({ id, label: r.label })),
     redirectUri: redirectUri(req),
   });
@@ -107,16 +112,9 @@ async function zohoItemId(conn, ctx, line, taxId) {
 
 async function zohoContactId(conn, customer) {
   if (customer.zoho_contact_id) return customer.zoho_contact_id;
-  const found = ((await zohoBooks(conn, 'GET', '/contacts', { query: { contact_name: customer.company_name } })).contacts || [])
-    .find((c) => sameName(c.contact_name, customer.company_name) && (!c.contact_type || c.contact_type === 'customer'));
-  let id = found && found.contact_id;
-  if (!id) {
-    const body = { contact_name: customer.company_name, company_name: customer.company_name, contact_type: 'customer' };
-    if (customer.email) body.contact_persons = [{ first_name: customer.contact_name || '', email: customer.email, is_primary_contact: true }];
-    id = (await zohoBooks(conn, 'POST', '/contacts', { body })).contact.contact_id;
-  }
-  await pool.query('UPDATE customers SET zoho_contact_id = $1 WHERE id = $2', [String(id), customer.id]);
-  return String(id);
+  const id = await findOrCreateZohoContact(conn, customer);
+  await pool.query('UPDATE customers SET zoho_contact_id = $1 WHERE id = $2', [id, customer.id]);
+  return id;
 }
 
 const inFlight = new Set(); // order ids being invoiced right now
@@ -192,6 +190,87 @@ router.post('/invoices', requireAdmin, async (req, res) => {
     }
   }
   res.json({ results, orders: await listOrders() });
+});
+
+// ---- Customers <-> Zoho contacts ----
+
+async function needConnection(res) {
+  const conn = await getConnection();
+  if (!conn) res.status(400).json({ error: 'Zoho Books is not connected yet' });
+  return conn;
+}
+
+async function linkedNames() {
+  const { rows } = await pool.query('SELECT id, company_name, zoho_contact_id FROM customers WHERE zoho_contact_id IS NOT NULL');
+  return new Map(rows.map((r) => [r.zoho_contact_id, { id: r.id, name: r.company_name }]));
+}
+
+// Search Zoho customers by name (or email, if it has an @), for adding or
+// linking a customer. Any staff member can, like adding a customer.
+router.get('/contacts', async (req, res) => {
+  const text = String(req.query.search || '').trim().slice(0, 100);
+  if (text.length < 2) return res.status(400).json({ error: 'Type at least 2 letters to search Zoho' });
+  const conn = await needConnection(res);
+  if (!conn) return;
+  const [found, linked] = await Promise.all([searchZohoCustomers(conn, text), linkedNames()]);
+  res.json(found.map((c) => ({ ...c, linkedTo: linked.get(c.id) || null })));
+});
+
+// One Zoho contact as customer fields, to fill in the customer pop-up.
+router.get('/contacts/:id', async (req, res) => {
+  const conn = await needConnection(res);
+  if (!conn) return;
+  const { contact } = await zohoBooks(conn, 'GET', `/contacts/${encodeURIComponent(req.params.id)}`);
+  res.json({ id: String(contact.contact_id), fields: customerFieldsFromContact(contact) });
+});
+
+// Suggested Zoho matches for every customer not yet linked to Zoho.
+router.get('/customer-matches', requireAdmin, async (req, res) => {
+  const conn = await needConnection(res);
+  if (!conn) return;
+  const [zoho, linked, { rows: customers }] = await Promise.all([
+    listZohoCustomers(conn), linkedNames(),
+    pool.query('SELECT * FROM customers WHERE zoho_contact_id IS NULL ORDER BY company_name'),
+  ]);
+  const { rows: [{ n: linkedCount }] } = await pool.query('SELECT count(*)::int AS n FROM customers WHERE zoho_contact_id IS NOT NULL');
+  res.json({
+    zohoCount: zoho.length,
+    linkedCount,
+    customers: customers.map((c) => ({
+      id: c.id, companyName: c.company_name, contactName: c.contact_name || '', email: c.email || '',
+      candidates: matchCandidates(c, zoho).map((z) => ({ ...z, linkedTo: linked.get(z.id) || null })),
+    })),
+  });
+});
+
+// Rob confirmed this customer is that Zoho contact: link them and take
+// Zoho's name.
+router.post('/customer-link', requireAdmin, async (req, res) => {
+  const conn = await needConnection(res);
+  if (!conn) return;
+  const { customerId, contactId } = req.body || {};
+  if (!customerId || !contactId) return res.status(400).json({ error: 'Choose a customer and a Zoho contact' });
+  const { contact } = await zohoBooks(conn, 'GET', `/contacts/${encodeURIComponent(contactId)}`);
+  const name = contact.contact_name || contact.company_name;
+  const { rowCount } = await pool.query(
+    'UPDATE customers SET zoho_contact_id = $1, company_name = COALESCE(NULLIF($2, \'\'), company_name) WHERE id = $3',
+    [String(contact.contact_id), name || '', customerId]
+  );
+  if (!rowCount) return res.status(404).json({ error: 'Customer not found' });
+  res.json({ customers: await listCustomers() });
+});
+
+// No match in Zoho: create the customer there (or link one with exactly
+// the same name, if it turns up).
+router.post('/customer-create', requireAdmin, async (req, res) => {
+  const conn = await needConnection(res);
+  if (!conn) return;
+  const { rows } = await pool.query('SELECT * FROM customers WHERE id = $1', [req.body && req.body.customerId]);
+  if (!rows[0]) return res.status(404).json({ error: 'Customer not found' });
+  if (rows[0].zoho_contact_id) return res.status(400).json({ error: 'That customer is already linked to Zoho' });
+  const id = await findOrCreateZohoContact(conn, rows[0]);
+  await pool.query('UPDATE customers SET zoho_contact_id = $1 WHERE id = $2', [id, rows[0].id]);
+  res.json({ customers: await listCustomers() });
 });
 
 export default router;

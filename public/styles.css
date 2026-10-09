@@ -228,3 +228,14 @@
   /* Zoho Books */
   .zohoLink{font-size:12px;font-weight:500;color:var(--gold);text-decoration:none;white-space:nowrap;}
   a.zohoLink:hover{text-decoration:underline;}
+
+/* Zoho customer search and matching */
+.zohoFind { background:var(--paper); border:1px solid var(--border); border-radius:10px; padding:10px 12px; }
+.zohoResults { margin-top:8px; display:flex; flex-direction:column; gap:6px; max-height:220px; overflow:auto; }
+.zohoResult { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:6px 8px; background:#fff; border-radius:8px; }
+.checkline { display:flex; align-items:center; gap:8px; margin-top:8px; font-weight:normal; }
+.checkline input { width:auto; }
+.zmRow { display:grid; grid-template-columns: 1fr 1.6fr auto; gap:14px; align-items:start; padding:12px 0; border-top:1px solid var(--border); }
+.zmRow.zmDone { grid-template-columns: 1fr 1.6fr; color:var(--text-muted); }
+.zmActions { display:flex; flex-direction:column; gap:6px; }
+@media (max-width: 700px) { .zmRow { grid-template-columns: 1fr; } .zmActions { flex-direction:row; } }

@@ -98,6 +98,11 @@ const api = {
     status: (reqOpts) => apiRequest('GET', '/api/zoho/status', undefined, reqOpts),
     disconnect: () => apiRequest('POST', '/api/zoho/disconnect'),
     createInvoices: (body) => apiRequest('POST', '/api/zoho/invoices', body),
+    searchContacts: (text) => apiRequest('GET', `/api/zoho/contacts?search=${encodeURIComponent(text)}`),
+    getContact: (id) => apiRequest('GET', `/api/zoho/contacts/${encodeURIComponent(id)}`),
+    customerMatches: () => apiRequest('GET', '/api/zoho/customer-matches'),
+    linkCustomer: (customerId, contactId) => apiRequest('POST', '/api/zoho/customer-link', { customerId, contactId }),
+    createCustomer: (customerId) => apiRequest('POST', '/api/zoho/customer-create', { customerId }),
   },
   colours: {
     create: (item) => apiRequest('POST', '/api/colours', item),

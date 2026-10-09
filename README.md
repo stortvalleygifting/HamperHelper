@@ -163,6 +163,15 @@ VAT-inclusive. The order then stores the Zoho invoice id and number, takes the
 Zoho number as its invoice number and is no longer Ready to invoice. An order
 that already has a Zoho invoice is skipped.
 
+Customers link to Zoho contacts (`customers.zoho_contact_id`); nothing is
+bulk-imported from Zoho. **Match with Zoho** on the Customers page (admins)
+lists every unlinked customer with Zoho's likeliest matches (name, email,
+email domain, contact person). Confirming a row links the customer and renames
+it to its Zoho name; a customer with no match can be created in Zoho instead.
+The customer pop-up has a Zoho search: picking a result fills in a new
+customer from Zoho (or links an existing one, taking Zoho's name), and a new
+customer not found in Zoho is created there too when saved.
+
 ## Proposal documents
 
 The Word template that used to be embedded as a ~900KB base64 string inside

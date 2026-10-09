@@ -75,6 +75,7 @@ export function customerToApi(row) {
     fontColor: row.font_color || '',
     logoUrl: row.logo_url || '',
     notes: row.notes || '',
+    zohoContactId: row.zoho_contact_id || null,
   };
 }
 
