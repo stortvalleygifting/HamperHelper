@@ -13,6 +13,7 @@ import packagingRouter from './routes/packaging.js';
 import shippingRouter from './routes/shipping.js';
 import sourcesRouter from './routes/sources.js';
 import coloursRouter from './routes/colours.js';
+import zohoRouter from './routes/zoho.js';
 import customersRouter from './routes/customers.js';
 import productsRouter from './routes/products.js';
 import ordersRouter from './routes/orders.js';
@@ -48,6 +49,7 @@ export function createApp() {
   app.use('/api/shipping', ...staffOnly, shippingRouter);
   app.use('/api/sources', ...staffOnly, sourcesRouter);
   app.use('/api/colours', ...staffOnly, coloursRouter);
+  app.use('/api/zoho', ...staffOnly, zohoRouter);
   app.use('/api/customers', ...staffOnly, customersRouter);
   app.use('/api/products', ...staffOnly, productsRouter);
   app.use('/api/orders', ...staffOnly, ordersRouter);

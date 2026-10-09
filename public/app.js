@@ -143,7 +143,8 @@ function showToast(msg){
 
 async function loadAll(){
   try{
-    const [data, staff] = await Promise.all([api.bootstrap(), api.staff.list()]);
+    const [data, staff, zoho] = await Promise.all([api.bootstrap(), api.staff.list(), api.zoho.status().catch(()=>null)]);
+    State.zoho = zoho;
     State.products = data.products;
     State.stock = data.stock;
     State.orders = data.orders;
@@ -463,7 +464,7 @@ function orderCard(o, compact, opts){
           <div class="ometa">${o.orderDate ? 'Ordered: '+o.orderDate : ''} ${o.deliveryDate ? ' · Dispatch: '+o.deliveryDate : ''} ${o.notes ? ' · '+o.notes : ''}</div>
           <div class="ometa">${canSeeCosts() ? `Cost: ${fmtMoney(totals.cost)} &nbsp;·&nbsp; ` : ''}Price: ${fmtMoney(totals.totalIncVat)} (inc VAT)${canSeeCosts() ? ` &nbsp;·&nbsp; Profit: ${profitToggleHtml(totals.profit)} (ex VAT)` : ''}</div>
           ${vatLine ? `<div class="ometa" style="color:var(--text-muted);">${vatLine}</div>` : ''}
-          <div style="margin-top:6px;">${statusBadge(o.status)} ${priorityBadge(o.priority)} ${o.readyToInvoice ? `<span class="badge invoice">Ready to invoice</span>` : ''} ${o.invoiceSent ? `<span class="badge packed">Invoice sent</span>` : ''}</div>
+          <div style="margin-top:6px;">${statusBadge(o.status)} ${priorityBadge(o.priority)} ${o.readyToInvoice ? `<span class="badge invoice">Ready to invoice</span>` : ''} ${o.invoiceSent ? `<span class="badge packed">Invoice sent</span>` : ''} ${zohoInvoiceLink(o)}</div>
         </div>
         <div class="oactions">
           ${backLabel ? `<button class="small ghost" data-regress="${o.id}">${backLabel}</button>` : ''}
@@ -1528,7 +1529,69 @@ function renderReports(){
       <button class="primary" id="downloadReportBtn" ${REPORTS.length? '' : 'disabled'}>Download</button>
       ${!REPORTS.length? `<div class="savehint" style="margin-top:10px;">Reports will show up here once they've been added.</div>` : ''}
     </div>
+    ${canSeeCosts() ? zohoPanelHtml() : ''}
   `;
+}
+
+// ---------- Zoho Books ----------
+function zohoConnected(){ return !!(State.zoho && State.zoho.connected); }
+function zohoInvoiceLink(o){
+  if(!o.zohoInvoiceId) return '';
+  const label = `Zoho invoice ${escHtml(o.zohoInvoiceNumber || '')}`.trim();
+  return State.zoho && State.zoho.invoiceUrlBase
+    ? `<a href="${State.zoho.invoiceUrlBase}${encodeURIComponent(o.zohoInvoiceId)}" target="_blank" rel="noopener" class="zohoLink">${label} ↗</a>`
+    : `<span class="zohoLink">${label}</span>`;
+}
+
+function zohoPanelHtml(){
+  const z = State.zoho;
+  if(!z) return '';
+  const ready = State.orders.filter(o=>o.readyToInvoice && !o.zohoInvoiceId);
+  return `
+    <div class="panel">
+      <h2>Zoho Books</h2>
+      ${!z.configured ? `<div class="savehint" style="margin:0;">To connect, register Hamper Helper in Zoho's API Console as a server-based application with the redirect address <span class="mono">${escHtml(z.redirectUri)}</span>, then add its ZOHO_CLIENT_ID and ZOHO_CLIENT_SECRET to Railway.</div>`
+      : !z.connected ? `
+        <p class="savehint" style="margin:0 0 10px;">Connect once, and admins can turn orders into draft invoices in Zoho Books.</p>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <select id="zohoRegion" style="max-width:260px;">${(z.regions||[]).map(r=>`<option value="${r.id}">${escHtml(r.label)}</option>`).join('')}</select>
+          <button class="primary" id="zohoConnectBtn">Connect Zoho Books</button>
+        </div>
+        <div class="savehint">Pick the Zoho site you sign in at.</div>`
+      : `
+        <p style="margin:0 0 10px;font-size:13.5px;">Connected to <strong>${escHtml(z.organizationName || 'Zoho Books')}</strong>${z.connectedBy ? ` by ${escHtml(z.connectedBy)}` : ''}.</p>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <button class="primary" id="zohoSendReadyBtn" ${ready.length ? '' : 'disabled'}>Create draft invoices for ${ready.length} ready order${ready.length===1?'':'s'}</button>
+          <button class="ghost small" id="zohoDisconnectBtn">Disconnect</button>
+        </div>
+        <div class="savehint">Each order marked Ready to invoice becomes one draft invoice in Zoho, to check and send from there. You can also create one from an order's pop-up.</div>`}
+    </div>`;
+}
+
+async function createZohoInvoices(body){
+  try{
+    const result = await api.zoho.createInvoices(body);
+    State.orders = result.orders;
+    render();
+    const ok = result.results.filter(r=>r.ok), bad = result.results.filter(r=>!r.ok);
+    if(bad.length) openZohoResultsDialog(result.results);
+    else showToast(ok.length===1 ? `Draft invoice ${ok[0].invoiceNumber} created in Zoho` : `${ok.length} draft invoices created in Zoho`);
+    return result;
+  }catch(e){ showToast(e.message || 'Could not reach Zoho'); return null; }
+}
+
+function openZohoResultsDialog(results){
+  const label = (id)=>{ const o = State.orders.find(x=>x.id===id); const c = o ? customerById(o.customerId) : null; return `${c ? escHtml(c.companyName) : 'Order'} #${escHtml(id.slice(-5))}`; };
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-overlay unsavedOverlay';
+  wrap.innerHTML = `
+    <div class="modal" style="width:480px;">
+      <h3>Zoho invoices</h3>
+      <ul class="blockerList">${results.map(r=>`<li>${label(r.orderId)}: ${r.ok ? `draft ${escHtml(r.invoiceNumber)} created` : `<span style="color:var(--berry);">${escHtml(r.error)}</span>`}</li>`).join('')}</ul>
+      <div class="row-between"><span></span><button class="primary" data-act="ok">OK</button></div>
+    </div>`;
+  wrap.querySelector('[data-act="ok"]').onclick = ()=> wrap.remove();
+  document.body.appendChild(wrap);
 }
 
 function renderSources(){
@@ -2673,6 +2736,8 @@ function openOrderModal(existing, prefill){
               <label style="display:flex;align-items:center;gap:8px;color:var(--text);font-size:13.5px;margin:0;"><input type="checkbox" id="f_invoicesent" style="width:auto;" ${o.invoiceSent?'checked':''}> Invoice sent</label>
             </div>
           </div>
+          ${existing && (o.zohoInvoiceId || (canSeeCosts() && zohoConnected())) ? `<div class="field" style="margin-top:12px;"><label>Zoho Books</label>
+            ${o.zohoInvoiceId ? zohoInvoiceLink(o) : `<button class="ghost small" id="zohoCreateBtn" data-nodirty>Create draft invoice in Zoho</button>`}</div>` : ''}
           ${existing ? statusHistoryHtml(o) : ''}
           <div class="row-between" style="margin-top:16px;">
             <button class="ghost" id="cancelBtn">Cancel</button>
@@ -2710,6 +2775,15 @@ function openOrderModal(existing, prefill){
       if(o.invoiceSent){ o.readyToInvoice = false; document.getElementById('f_invoice').checked = false; }
     };
     document.getElementById('f_priority').onchange = (e)=>{ o.priority = e.target.value; };
+    const zohoCreateBtn = document.getElementById('zohoCreateBtn');
+    if(zohoCreateBtn) zohoCreateBtn.onclick = async ()=>{
+      if(isModalDirty()){ showToast('Save the order first, then create the invoice'); return; }
+      zohoCreateBtn.disabled = true; zohoCreateBtn.textContent = 'Creating in Zoho…';
+      const result = await createZohoInvoices({ orderIds:[o.id] });
+      const fresh = State.orders.find(x=>x.id===o.id);
+      if(result && fresh && fresh.zohoInvoiceId) openOrderModal(fresh);
+      else { zohoCreateBtn.disabled = false; zohoCreateBtn.textContent = 'Create draft invoice in Zoho'; }
+    };
     document.getElementById('addCustomerBtn').onclick = ()=>{
       openCustomerModal(null, {
         onDone: (newCustomer)=>{ o.customerId = newCustomer.id; paint(); },
@@ -2899,6 +2973,20 @@ function attachHandlers(){
   const reportSelect = document.getElementById('reportSelect');
   if(reportSelect) reportSelect.onchange = (e)=>{ State.reportSelection = e.target.value; render(); };
   wireOrdersReportFilters();
+  const zohoConnectBtn = document.getElementById('zohoConnectBtn');
+  if(zohoConnectBtn) zohoConnectBtn.onclick = ()=>{ location.href = '/api/zoho/connect?region=' + encodeURIComponent(document.getElementById('zohoRegion').value); };
+  const zohoDisconnectBtn = document.getElementById('zohoDisconnectBtn');
+  if(zohoDisconnectBtn) zohoDisconnectBtn.onclick = ()=>{
+    openConfirmModal('Disconnect Zoho Books? Invoices already made stay in Zoho; you can connect again any time.', async ()=>{
+      try{ await api.zoho.disconnect(); State.zoho = await api.zoho.status(); render(); showToast('Zoho Books disconnected'); }
+      catch(e){ showToast(e.message || 'Could not disconnect'); }
+    }, { title:'Disconnect Zoho Books?', confirmLabel:'Disconnect' });
+  };
+  const zohoSendReadyBtn = document.getElementById('zohoSendReadyBtn');
+  if(zohoSendReadyBtn) zohoSendReadyBtn.onclick = async ()=>{
+    zohoSendReadyBtn.disabled = true; zohoSendReadyBtn.textContent = 'Creating in Zoho…';
+    await createZohoInvoices({ allReady: true });
+  };
   wireProductionDrag();
   document.querySelectorAll('[data-togglehamperitems]').forEach(b=>{
     b.onclick = ()=>{
@@ -3395,6 +3483,11 @@ document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState=
 (async function init(){
   document.getElementById('app').innerHTML = `<div style="padding:40px;color:#6B6656;font-family:Inter,sans-serif;">Loading…</div>`;
   const start = parseHash();
+  // Back from connecting Zoho Books.
+  const qp = new URLSearchParams(location.search);
+  const zohoMsg = qp.get('zoho')==='connected' ? 'Zoho Books connected' : qp.get('zoho_error');
+  if(qp.has('zoho') || qp.has('zoho_error')) history.replaceState(null, '', location.pathname + location.hash);
+  if(zohoMsg) setTimeout(()=> showToast(zohoMsg), 600);
   if(start.tab) State.tab = start.tab;
   State.me = await api.auth.session();
   if(!State.me){ renderLogin(); return; }

@@ -94,6 +94,11 @@ const api = {
     update: (id, item) => apiRequest('PUT', `/api/shipping/${id}`, item),
     remove: (id) => apiRequest('DELETE', `/api/shipping/${id}`),
   },
+  zoho: {
+    status: (reqOpts) => apiRequest('GET', '/api/zoho/status', undefined, reqOpts),
+    disconnect: () => apiRequest('POST', '/api/zoho/disconnect'),
+    createInvoices: (body) => apiRequest('POST', '/api/zoho/invoices', body),
+  },
   colours: {
     create: (item) => apiRequest('POST', '/api/colours', item),
     update: (id, item) => apiRequest('PUT', `/api/colours/${id}`, item),

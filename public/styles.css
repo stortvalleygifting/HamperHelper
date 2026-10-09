@@ -225,3 +225,6 @@
   .badge.revision-required{background:var(--gold-light);color:var(--gold);}
   .badge.declined{background:var(--berry-light);color:var(--berry);}
   .badge.accepted{background:var(--green-light);color:var(--green);}
+  /* Zoho Books */
+  .zohoLink{font-size:12px;font-weight:500;color:var(--gold);text-decoration:none;white-space:nowrap;}
+  a.zohoLink:hover{text-decoration:underline;}

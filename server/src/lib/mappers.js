@@ -118,6 +118,8 @@ export function orderToApi(row, items, history) {
     stockDeducted: row.stock_deducted,
     invoiceNumber: row.invoice_number,
     proposalId: row.proposal_id || null,
+    zohoInvoiceId: row.zoho_invoice_id || null,
+    zohoInvoiceNumber: row.zoho_invoice_number || null,
     items: items.map((it) => ({
       kind: it.stock_id ? 'item' : 'hamper',
       productId: it.product_id,

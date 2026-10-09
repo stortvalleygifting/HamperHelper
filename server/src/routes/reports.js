@@ -8,6 +8,7 @@ import { listShipping } from './shipping.js';
 import { listCustomers } from './customers.js';
 import { computeOrderLineUnit, vatRatePercent } from '../lib/pricing.js';
 import { toCsv } from '../lib/csv.js';
+import { invoiceLinesForOrder } from '../lib/invoiceLines.js';
 import ExcelJS from 'exceljs';
 
 const router = Router();
@@ -19,7 +20,7 @@ const INVOICE_CSV_FIELDS = [
   'Item Tax Type', 'Notes', "Terms & Conditions", 'PayPal', 'Authorize.Net', 'Google Checkout', 'Warehouse Name',
 ];
 
-const INVOICE_VAT_LABELS = { 'Standard 20%': 'Standard Rate', 'Reduced 5%': 'Reduced Rate', 'Zero 0%': 'Zero Rate', Exempt: 'Exempt' };
+export const INVOICE_VAT_LABELS = { 'Standard 20%': 'Standard Rate', 'Reduced 5%': 'Reduced Rate', 'Zero 0%': 'Zero Rate', Exempt: 'Exempt' };
 
 async function nextInvoiceNumber(client) {
   const { rows } = await client.query("SELECT invoice_number FROM orders WHERE invoice_number ~ '^INV-HH[0-9]{4}$'");
@@ -66,17 +67,7 @@ router.post('/ready-to-invoice', async (req, res) => {
 
       const { rows: items } = await client.query('SELECT * FROM order_items WHERE order_id = $1', [order.id]);
       const cust = order.customer_id ? customerById.get(order.customer_id) : null;
-      for (const it of items) {
-        const unit = computeOrderLineUnit({ productId: it.product_id, stockId: it.stock_id }, maps);
-        if (!unit) continue;
-        const totals = unit.totals;
-        const splitByRate = totals.vatBreakdown.filter((v) => !v.isShipping).length > 1;
-        for (const v of totals.vatBreakdown) {
-          const vatLabel = INVOICE_VAT_LABELS[v.rate] || v.rate;
-          const vatPct = Math.round(vatRatePercent(v.rate) * 100);
-          const itemName = v.isShipping
-            ? `${unit.name} - shipping`
-            : splitByRate ? `${unit.name} - ${vatPct === 0 ? 'no VAT' : 'VAT ' + vatPct + '%'}` : unit.name;
+      for (const line of invoiceLinesForOrder(items, maps)) {
           rows.push({
             'Invoice Date': todayStr,
             'Invoice Number': invoiceNumber,
@@ -88,16 +79,16 @@ router.post('/ready-to-invoice', async (req, res) => {
             'Template Name': '',
             'Currency Code': 'GBP',
             'Exchange Rate': 1,
-            'Item Name': itemName,
+            'Item Name': line.name,
             SKU: '',
             'Item Desc': '',
-            Quantity: it.qty || 0,
+            Quantity: line.qty,
             'Item Type': 'goods',
-            'Item Price': v.totalIncVat.toFixed(2),
+            'Item Price': line.unitPriceIncVat.toFixed(2),
             'Is Inclusive Tax': 'TRUE',
             'Discount(%)': 0,
-            'Item Tax': vatLabel,
-            'Item Tax %': vatPct,
+            'Item Tax': INVOICE_VAT_LABELS[line.rate] || line.rate,
+            'Item Tax %': line.vatPct,
             'Item Tax Type': 'ItemAmount',
             Notes: order.notes || '',
             'Terms & Conditions': '',
@@ -106,7 +97,6 @@ router.post('/ready-to-invoice', async (req, res) => {
             'Google Checkout': '',
             'Warehouse Name': '',
           });
-        }
       }
     }
 

@@ -143,6 +143,26 @@ served from `/uploads/proposals/...`. Both are plain local disk storage under
 `server/src/lib/storage.js`) for object storage if you need it to survive
 across deploys/containers.
 
+## Zoho Books invoices
+
+Admins can turn orders into **draft** invoices in Zoho Books (nothing is
+emailed; check and send from Zoho). Setup:
+
+1. In the Zoho API Console (https://api-console.zoho.eu for UK/EU accounts)
+   add a *Server-based Application* with redirect URI
+   `https://<your-domain>/api/zoho/callback`.
+2. Set `ZOHO_CLIENT_ID` and `ZOHO_CLIENT_SECRET` on the server.
+3. In the app, Reports → Zoho Books → pick the region → *Connect Zoho Books*.
+
+The refresh token is stored in the `zoho_connection` table (one row).
+"Create draft invoices for N ready orders" on Reports, or the button in an
+order's pop-up, creates one invoice per order: customers are matched to Zoho
+contacts by name (created if missing), each line becomes a Zoho item matched
+by name (created if missing) with the matching VAT rate, and prices are sent
+VAT-inclusive. The order then stores the Zoho invoice id and number, takes the
+Zoho number as its invoice number and is no longer Ready to invoice. An order
+that already has a Zoho invoice is skipped.
+
 ## Proposal documents
 
 The Word template that used to be embedded as a ~900KB base64 string inside
