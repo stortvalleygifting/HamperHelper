@@ -11,7 +11,7 @@ const REPORTS = [
 ];
 
 const PRIORITIES = ['High','Medium','Low'];
-const PROPOSAL_STATUSES = ['Draft','Sent','Revision required','Declined','Accepted'];
+const PROPOSAL_STATUSES = ['Draft','Revision required','Sent','Accepted','Declined'];
 function priorityRank(p){ const i = PRIORITIES.indexOf(p); return i<0 ? 1 : i; }
 function priorityBadge(p){ p = PRIORITIES.includes(p) ? p : 'Medium'; return `<span class="badge prio-${p.toLowerCase()}">${p} priority</span>`; }
 function escHtml(s){ return String(s==null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }

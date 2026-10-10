@@ -195,8 +195,8 @@ each hamper's price without its shipping line. Once an order has been made
 from a proposal its Convert to order button goes away. The Proposals page
 filters by status and customer and searches name and customer.
 Once converted, a proposal shows its order's status (e.g. "Order: Packing").
-Proposals are sorted by proposal status (Draft, Sent, Revision required,
-Declined, Accepted), then order status (no order first, then along the order
+Proposals are sorted by proposal status (Draft, Revision required, Sent,
+Accepted, Declined), then order status (no order first, then along the order
 flow), then newest proposal date first.
 
 When a hamper goes on an order (added by hand or from a proposal), its own
