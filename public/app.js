@@ -495,19 +495,24 @@ function defaultProposalName(customerId, isoDate){
 }
 function proposalName(pr){ return pr.name || defaultProposalName(pr.customerId, pr.proposalDate); }
 function proposalHasOrder(pr){ return State.orders.some(o=>o.proposalId===pr.id); }
+// The newest order made from a proposal, or null.
+function proposalOrder(pr){
+  return State.orders.filter(o=>o.proposalId===pr.id).sort((a,b)=>(b.orderDate||'').localeCompare(a.orderDate||''))[0] || null;
+}
 
 function proposalCard(pr){
   const cust = customerById(pr.customerId);
   const custLabel = cust ? customerLabel(cust) : 'Unknown customer';
   const hampers = (pr.hamperIds||[]).map(id=>{ const p = productById(id); return p? p.name : null; }).filter(Boolean);
-  const hasOrder = proposalHasOrder(pr);
+  const order = proposalOrder(pr);
+  const hasOrder = !!order;
   return `
     <div class="ordercard clickrow" data-rowkind="proposal" data-rowid="${pr.id}">
       <div class="orow">
         <div>
           <div class="oname">${escHtml(proposalName(pr))} <span class="mono">#${pr.id.slice(-5)}</span></div>
           <div class="ometa">${customerLink(cust, custLabel)}</div>
-          <div style="margin:4px 0 2px;">${statusBadge(pr.status || 'Draft')}${hasOrder ? ' <span class="badge invoice">Order created</span>' : ''}</div>
+          <div style="margin:4px 0 2px;">${statusBadge(pr.status || 'Draft')}${order ? ` <span class="badge ${order.status.toLowerCase()}" title="Status of order #${order.id.slice(-5)}">Order: ${escHtml(order.status)}</span>` : ''}</div>
           <div class="ometa">${pr.proposalDate? 'Proposed: '+pr.proposalDate : ''}${pr.excludeShipping ? ' · Shipping left off the document' : ''}</div>
           <div class="ometa">${hampers.length? hampers.join(', ') : 'No hamper options chosen yet'}</div>
           ${pr.docName ? `<div class="ometa">Document: ${pr.docName} (${pr.docSource==='uploaded'?'uploaded':'generated'})</div>` : ''}
@@ -537,6 +542,13 @@ function getFilteredProposals(){
   }
   if(f.status) rows = rows.filter(pr=>(pr.status||'Draft')===f.status);
   if(f.customerId) rows = rows.filter(pr=>pr.customerId===f.customerId);
+  // Proposal status (in the status list's order), then the order's status
+  // (no order first, then along the order flow), then newest date first.
+  const orderRank = (pr)=>{ const o = proposalOrder(pr); return o ? 1 + ORDER_FLOW.indexOf(o.status) : 0; };
+  rows.sort((a,b)=>
+    PROPOSAL_STATUSES.indexOf(a.status||'Draft') - PROPOSAL_STATUSES.indexOf(b.status||'Draft')
+    || orderRank(a) - orderRank(b)
+    || (b.proposalDate||'').localeCompare(a.proposalDate||''));
   return rows;
 }
 
