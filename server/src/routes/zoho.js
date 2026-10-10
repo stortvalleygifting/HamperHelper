@@ -98,19 +98,6 @@ function pickTax(taxes, rate, vatPct) {
     || taxes.find((t) => Number(t.tax_percentage) === vatPct);
 }
 
-const sameName = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
-
-async function zohoItemId(conn, ctx, line, taxId) {
-  const name = line.name.slice(0, 100);
-  const key = name.toLowerCase();
-  if (ctx.items.has(key)) return ctx.items.get(key);
-  const found = ((await zohoBooks(conn, 'GET', '/items', { query: { name } })).items || []).find((i) => sameName(i.name, name));
-  const id = found ? found.item_id
-    : (await zohoBooks(conn, 'POST', '/items', { body: { name, rate: line.unitPriceIncVat, tax_id: taxId, product_type: 'goods' } })).item.item_id;
-  ctx.items.set(key, id);
-  return id;
-}
-
 async function zohoContactId(conn, customer) {
   if (customer.zoho_contact_id) return customer.zoho_contact_id;
   const id = await findOrCreateZohoContact(conn, customer);
@@ -140,7 +127,10 @@ async function createDraftInvoice(conn, ctx, orderId) {
     for (const line of lines) {
       const tax = pickTax(ctx.taxes, line.rate, line.vatPct);
       if (!tax) throw new Error(`Zoho has no ${line.vatPct}% tax set up`);
-      lineItems.push({ item_id: await zohoItemId(conn, ctx, line, tax.tax_id), name: line.name.slice(0, 100), rate: line.unitPriceIncVat, quantity: line.qty, tax_id: tax.tax_id });
+      // A free-text line: no Zoho item is looked up or created.
+      const lineItem = { name: line.name.slice(0, 100), rate: line.unitPriceIncVat, quantity: line.qty, tax_id: tax.tax_id };
+      if (line.name.length > 100) lineItem.description = line.name;
+      lineItems.push(lineItem);
     }
     const body = {
       customer_id: await zohoContactId(conn, customer),
@@ -179,7 +169,6 @@ router.post('/invoices', requireAdmin, async (req, res) => {
       productById: new Map(products.map((p) => [p.id, p])), stockById: new Map(stock.map((s) => [s.id, s])),
       packagingById: new Map(packaging.map((p) => [p.id, p])), shippingById: new Map(shipping.map((s) => [s.id, s])),
     },
-    items: new Map(),
     taxes: null,
   };
   const results = [];

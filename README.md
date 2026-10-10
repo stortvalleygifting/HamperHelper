@@ -157,8 +157,8 @@ emailed; check and send from Zoho). Setup:
 The refresh token is stored in the `zoho_connection` table (one row).
 "Create draft invoices for N ready orders" on Reports, or the button in an
 order's pop-up, creates one invoice per order: customers are matched to Zoho
-contacts by name (created if missing), each line becomes a Zoho item matched
-by name (created if missing) with the matching VAT rate, and prices are sent
+contacts by name (created if missing), each line is a free-text line (no Zoho
+item is looked up or created) with the matching VAT rate, and prices are sent
 VAT-inclusive. The order then stores the Zoho invoice id and number, takes the
 Zoho number as its invoice number and is no longer Ready to invoice. An order
 that already has a Zoho invoice is skipped.
